@@ -51,6 +51,7 @@ class ApplicationState:
     result: AnalysisResult | None = None
     message: str = "请选择 RAW 采集文件"
     viewport: Viewport | None = None
+    displayed_frequency_range: tuple[float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,9 @@ class Application:
         self._lock = RLock()
         self._generation = 0
         self._state = ApplicationState()
+        self._export_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="png-export")
+        from .export import ExportResult
+        self._export_status = ExportResult("idle", message="尚未导出")
         self._browser = BrowserState()
         self._batch = 0
         self._views = {}
@@ -187,7 +191,8 @@ class Application:
         try:
             result = _compute(path, AnalysisParameters())
             message = "；".join(result.warnings) if result.warnings else "计算完成 · 未滤波"
-            state = ApplicationState("ready", path, result, message, _full_view(result))
+            state = ApplicationState("ready", path, result, message, _full_view(result),
+                                     (0, result.parameters.sample_rate/2))
         except (OSError, ValueError) as error:
             state = ApplicationState("failed", path, message=f"{path}: {error}")
         with self._lock:
@@ -199,6 +204,33 @@ class Application:
                     state = replace(state, viewport=self._views.get(path, state.viewport))
                 self._state = state
         return state
+
+    @property
+    def export_status(self):
+        with self._lock:
+            return self._export_status
+
+    def export_png(self, directory: str | Path, *, mode="current") -> Future:
+        """Export an immutable applied-result/view snapshot without changing browsing state."""
+        from .export import ExportResult, write_png
+        with self._lock:
+            state = self._state
+            if mode not in ("current", "full") or state.status != "ready":
+                message = "导出模式必须为 current 或 full" if mode not in ("current", "full") else "时频图尚未就绪，无法导出"
+                self._export_status = ExportResult("failed", message=message)
+                future = Future()
+                future.set_result(self._export_status)
+                return future
+            view = state.viewport if mode == "current" else Viewport(
+                _full_view(state.result).time_range,
+                state.displayed_frequency_range or _full_view(state.result).frequency_range)
+            self._export_status = ExportResult("exporting", viewport=view, message="正在导出 PNG…")
+        def work():
+            exported = write_png(state.result, view, Path(directory), mode)
+            with self._lock:
+                self._export_status = exported
+            return exported
+        return self._export_executor.submit(work)
 
     def set_viewport(self, viewport: Viewport) -> ApplicationState:
         """Select a rectangle without recomputing PSD or file-wide color levels."""
@@ -240,6 +272,7 @@ class Application:
 
     def close(self):
         self._executor.shutdown(wait=True, cancel_futures=True)
+        self._export_executor.shutdown(wait=True, cancel_futures=True)
 
     def __enter__(self):
         return self
