@@ -92,3 +92,45 @@ def test_pointer_zoom_pan_rectangle_and_keyboard_restore(qtbot, tmp_path):
     visible = box.viewRange()
     np.testing.assert_allclose(visible, [full.viewport.time_range, [0, 48]])
     window.close()
+
+
+def test_export_menu_modes_choose_directory_and_keep_plot(qtbot, tmp_path, monkeypatch):
+    from PIL import Image
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    assert not window.export_button.isEnabled()
+    window.open_file(raw_file(tmp_path, [2097152]))
+    qtbot.waitUntil(lambda: window.current_result is not None)
+    window.plot.setRange(xRange=(.02, .04), yRange=(1, 12), padding=0)
+    view = window.application.state.viewport
+    selected = []
+    def choose(*args):
+        selected.append(args[1])
+        return str(tmp_path)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", choose)
+    actions = window.export_button.menu().actions()
+    assert [action.text() for action in actions] == ["导出当前视图…", "导出全时段…"]
+    ticks = []
+    heartbeat = QTimer(window)
+    heartbeat.setInterval(1)
+    heartbeat.timeout.connect(lambda: ticks.append(1))
+    heartbeat.start()
+    actions[0].trigger()
+    qtbot.waitUntil(lambda: "PNG 已导出" in window.status_label.text())
+    assert window.export_button.isEnabled()
+    assert ticks  # Qt processes events while the real image is rendered/written.
+    heartbeat.stop()
+    assert window.application.state.viewport == view
+    actions[1].trigger()
+    qtbot.waitUntil(lambda: (tmp_path / "采集_1.png").exists())
+    qtbot.waitUntil(lambda: window.export_button.isEnabled())
+    assert len(selected) == 2
+    with Image.open(tmp_path / "采集_1.png") as image:
+        assert image.info["Export mode"] == "full"
+    # Canceling the system chooser keeps the previous successful status/output.
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: "")
+    actions[0].trigger()
+    assert not (tmp_path / "采集_2.png").exists()
+    assert window.application.state.viewport == view
+    window.close()
