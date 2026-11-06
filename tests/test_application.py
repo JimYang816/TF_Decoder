@@ -75,3 +75,24 @@ def test_zero_tail_and_failures_are_visible_and_recoverable(tmp_path):
         assert np.all(state.result.db == -156.53559774527022)
         assert state.result.levels[1] > state.result.levels[0]
         assert app.state == state
+
+
+def test_viewport_zoom_pan_rectangle_and_restore_preserve_analysis(tmp_path):
+    from tf_decoder import Viewport
+    path = raw_file(tmp_path, [2097152])
+    with Application() as app:
+        opened = app.open_file(path).result(timeout=10)
+        result = opened.result
+        assert opened.viewport == Viewport((0, 8192/96000), (0, 48000))
+        zoomed = app.zoom_viewport(0.5, time=0.02, frequency=12000)
+        np.testing.assert_allclose(zoomed.viewport.time_range, [0.01, 0.05266666666666667])
+        assert zoomed.viewport.frequency_range == (6000, 30000)
+        panned = app.pan_viewport(0.005, 2000)
+        np.testing.assert_allclose(panned.viewport.time_range, [0.015, 0.05766666666666667])
+        assert panned.viewport.frequency_range == (8000, 32000)
+        selected = app.set_viewport(Viewport((0.02, 0.04), (10000, 18000)))
+        assert selected.viewport == Viewport((0.02, 0.04), (10000, 18000))
+        assert selected.path == opened.path
+        assert selected.result is result
+        assert selected.result.levels == opened.result.levels
+        assert app.restore_full_view().viewport == opened.viewport
