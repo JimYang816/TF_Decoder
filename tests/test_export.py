@@ -100,3 +100,23 @@ def test_raster_range_and_original_parula_scale_follow_applied_snapshot(tmp_path
         with Image.open(full.path) as image:
             # Full time includes the early DC signal at the original parula maximum.
             assert image.getpixel((400, 769))[:3] == (249, 251, 21)
+
+
+def test_export_snapshot_survives_browsing_another_file(tmp_path, qapp):
+    first = raw_file(tmp_path, [2097152], name="first.raw")
+    second = raw_file(tmp_path, [0], name="second.raw")
+    with Application() as app:
+        state = app.open_file(first).result(timeout=10)
+        selected = Viewport((.01, .03), (0, 12000))
+        app.set_viewport(selected)
+        future = app.export_png(tmp_path)
+        new_state = app.open_file(second).result(timeout=10)
+        exported = future.result(timeout=10)
+        assert exported.status == "succeeded"
+        assert exported.path.name == "first.png"
+        assert exported.viewport == selected
+        assert app.state is new_state
+        assert app.state.path == second.resolve()
+        with Image.open(exported.path) as image:
+            assert image.info["Source"] == str(first.resolve())
+            assert image.info["Color levels (dB)"] == f"{state.result.levels[0]:.17g}, {state.result.levels[1]:.17g}"
