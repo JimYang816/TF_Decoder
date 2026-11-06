@@ -120,3 +120,35 @@ def test_export_snapshot_survives_browsing_another_file(tmp_path, qapp):
         with Image.open(exported.path) as image:
             assert image.info["Source"] == str(first.resolve())
             assert image.info["Color levels (dB)"] == f"{state.result.levels[0]:.17g}, {state.result.levels[1]:.17g}"
+
+
+@pytest.mark.parametrize('mode', ['current', 'full'])
+def test_folder_single_export_keeps_relative_directory_snapshot(tmp_path, qapp, monkeypatch, mode):
+    from pathlib import Path
+    from threading import Event
+    source_dir = tmp_path / 'input' / '中文子目录'
+    source_dir.mkdir(parents=True)
+    source = raw_file(source_dir, [0], name='one.raw')
+    output = tmp_path / 'output'
+    output.mkdir()
+    entered, release = Event(), Event()
+    original_open = Path.open
+    def gated_open(path, *args, **kwargs):
+        if path.suffix == '.png':
+            entered.set()
+            assert release.wait(10)
+        return original_open(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'open', gated_open)
+    with Application() as app:
+        app.open_folder(source_dir.parent).result(timeout=10)
+        future = app.export_png(output, mode=mode)
+        try:
+            assert entered.wait(10)
+            app.open_file(source).result(timeout=10)
+        finally:
+            release.set()
+        exported = future.result(timeout=10)
+        assert exported.status == 'succeeded'
+        assert exported.path == output / '中文子目录' / 'one.png'
+        standalone = app.export_png(output, mode=mode).result(timeout=10)
+        assert standalone.path == output / 'one.png'

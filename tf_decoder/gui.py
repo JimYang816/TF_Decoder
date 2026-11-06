@@ -38,6 +38,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(16)
         top = QHBoxLayout()
         title = QLabel("RAW 时频分析")
+        self.heading = title
         title.setObjectName("heading")
         top.addWidget(title)
         top.addStretch()
@@ -210,6 +211,20 @@ class MainWindow(QMainWindow):
         QApplication.instance().installEventFilter(self)
         self._refresh_browser()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not hasattr(self, 'parameter_dock'):
+            return
+        narrow = event.size().width() < 1000
+        if event.size().width() < 1200:
+            self.parameter_dock.hide()
+        if narrow:
+            self.file_dock.hide()
+        self.heading.setVisible(not narrow)
+        layout = self.centralWidget().layout()
+        layout.setContentsMargins(*( (12, 8, 12, 8) if narrow else (24, 20, 24, 16)))
+        layout.setSpacing(6 if narrow else 16)
+
     def _build_parameters(self, top):
         self.parameters_toggle = QPushButton('参数')
         self.parameters_toggle.setCheckable(True)
@@ -357,7 +372,7 @@ class MainWindow(QMainWindow):
 
     def _show_pending(self):
         self.current_result = None
-        self.export_button.setEnabled(False)
+        self._refresh_export_actions()
         self.image.clear()
         self.reset_button.setEnabled(False)
         self.pan_button.setEnabled(False)
@@ -379,7 +394,7 @@ class MainWindow(QMainWindow):
         self.file_title.setText(state.path.name if state.path else '尚未打开采集文件')
         self.file_title.setToolTip(str(state.path or ''))
         self.status_label.setText(state.message)
-        self.export_button.setEnabled(bool(self.application.browser.entries) and not self._exporting)
+        self._refresh_export_actions()
         if state.result is None:
             self.graphics.setAccessibleDescription(state.message)
             return
@@ -389,7 +404,6 @@ class MainWindow(QMainWindow):
         bounds = state.displayed_frequency_range
         self.configuration_label.setText(f'已应用：{filtering} · {p.sample_rate/1000:g} kHz · 窗长 {p.window_length} · 重叠 {p.overlap} · FFT {p.fft_length} · 显示 {bounds[0]/1000:g}–{bounds[1]/1000:g} kHz')
         self.configuration_label.setToolTip(str(p))
-        self.export_button.setEnabled(not self._exporting)
         self.image.setImage(result.db, autoLevels=False, levels=result.levels)
         dt = (result.parameters.window_length-result.parameters.overlap)/result.parameters.sample_rate
         df = result.parameters.sample_rate/result.parameters.fft_length/1000
@@ -424,6 +438,7 @@ class MainWindow(QMainWindow):
 
     def _batch_export_progress(self, state):
         running = state.status == 'exporting'
+        self._refresh_export_actions()
         self.cancel_export_button.setEnabled(running)
         self.export_details_button.setEnabled(bool(state.entries))
         self.batch_progress.setRange(0, max(1, len(state.entries)))
@@ -442,9 +457,18 @@ class MainWindow(QMainWindow):
     def _export_finished(self, exported):
         self._exporting = False
         self.status_label.setText(exported.message)
-        self.export_button.setEnabled(self.application.state.status == "ready")
+        self._refresh_export_actions()
         if self.application.state.status not in ("computing", "scanning"):
             self.progress.hide()
+
+    def _refresh_export_actions(self):
+        ready = self.application.state.status == 'ready' and not self._exporting
+        actions = self.export_button.menu().actions()
+        for action in actions[:2]:
+            action.setEnabled(ready)
+        actions[2].setEnabled(bool(self.application.browser.entries) and
+                              self.application.batch_export_status.status != 'exporting')
+        self.export_button.setEnabled(not self._exporting and any(action.isEnabled() for action in actions))
 
     def show_full_range(self):
         if self.current_result is not None:

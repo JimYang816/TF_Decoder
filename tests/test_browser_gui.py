@@ -38,3 +38,23 @@ def test_folder_list_navigation_keyboard_and_view_memory(qtbot, tmp_path, monkey
     window.list_toggle.click()
     assert not window.file_dock.isVisible()
     window.close()
+
+
+def test_narrow_window_collapses_sidebars_and_keeps_plot_usable(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    window.open_file(raw_file(tmp_path, [0], '较长中文采集文件名称.raw'))
+    qtbot.waitUntil(lambda: window.current_result is not None)
+    window.resize(720, 480)
+    qtbot.waitUntil(lambda: window.width() == 720)
+    assert not window.file_dock.isVisible()
+    assert not window.parameter_dock.isVisible()
+    assert not window.list_toggle.isChecked()
+    assert not window.parameters_toggle.isChecked()
+    qtbot.waitUntil(lambda: window.graphics.width() >= 650 and window.graphics.height() >= 140)
+    window.parameters_toggle.click()
+    assert window.parameter_dock.isVisible()
+    window.parameters_toggle.click()
+    assert window.reset_button.isVisible()
+    window.close()

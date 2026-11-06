@@ -5,6 +5,25 @@ from tf_decoder import Application, AnalysisParameters
 from test_application import raw_file
 
 
+def test_noop_and_display_only_apply_preserve_each_files_time_view(tmp_path):
+    from tf_decoder import Viewport
+    raw_file(tmp_path, [0], '1.raw')
+    raw_file(tmp_path, [1], '2.raw')
+    with Application() as app:
+        app.open_folder(tmp_path).result(timeout=10)
+        first = Viewport((.01, .03), (2000, 8000))
+        app.set_viewport(first)
+        app.next_file().result(timeout=10)
+        second = Viewport((.02, .04), (20000, 30000))
+        app.set_viewport(second)
+        app.apply_parameters(app.applied_parameters).result(timeout=10)
+        assert app.state.viewport == second
+        assert app.previous_file().result(timeout=10).viewport == first
+        app.apply_parameters(app.applied_parameters, displayed_frequency_range=(4000, 12000)).result(timeout=10)
+        assert app.state.viewport == Viewport(first.time_range, (4000, 8000))
+        assert app.next_file().result(timeout=10).viewport == Viewport(second.time_range, (4000, 12000))
+
+
 def test_applied_parameters_are_batch_wide_and_display_range_preserves_analysis(tmp_path):
     raw_file(tmp_path, [2097152], '1.raw')
     raw_file(tmp_path, [1048576], '2.raw')
