@@ -39,8 +39,27 @@ PyInstaller 从解释器的基础安装复制必要 DLL；构建日志中的 Ana
 [实现日志](implementation-run.md)、[数值一致性](numerical-parity.md) 和 README。
 本切片不改动界面或信号计算；没有添加仅检验构建脚本文本的测试。
 
+最终交付包从独立的官方 CPython 3.13.9 环境构建，源码提交为
+`b35d240d2e9cf5e19320aa4d916b64898fe432c6`，`source_dirty=false`。
+构建的 DLL 搜索 PATH 只含构建解释器和 Windows 系统目录；构建依赖清单中没有
+Anaconda 或 Codex/Poppler 路径。OpenSSL 3.0.18 DLL 来自官方 Python 分发包，
+附带完整 Apache-2.0 许可。PyInstaller 对未使用的可选 OpenGL 和已不存在的
+SciPy `_cdflib` hook 给出警告；实际 GUI 启动正常。
+
+| 交付证据 | 结果 |
+| --- | --- |
+| ZIP | `dist/TF-Decoder-0.1.0-windows-x64.zip` |
+| 字节数 | 93,066,641 |
+| SHA256 | `8e20bea72ccb5a55cb05d8dbd17482493f0668a64e2acbbc2bd488d7c5372c99` |
+| 解压检查 | 中文路径下实际解压 ZIP，488 个文件的 SHA256 全部匹配，包含 parula 数据 |
+| 隔离启动 | PATH 仅 `C:\Windows\System32`，清除 Python/Conda/Qt 环境变量，独立 TEMP；实际 EXE 持续运行 5 秒后由验收脚本终止 |
+| 图形平台 | 此次隔离启动使用 Qt offscreen；原生窗口操作由另一次 GUI 冒烟记录，不能混为一谈 |
+| DLL 检查 | Python/NumPy/SciPy/Qt 均从解压目录加载，无外部开发环境运行库；宿主机额外注入 Nahimic 音频 DLL，数字签名为有效 SteelSeries France SASU |
+
+逐项 DLL 路径与验收 JSON 保存在交付目录 `dist/isolated-package-audit.json`。
+
 本机装有 Python 和 MATLAB。即使在剥离 PATH、清空 Python/Qt 环境变量、独立目录下
-成功启动实际 EXE，并检查所加载 DLL 均在交付目录或 Windows 系统目录，也只能证明
+成功启动实际 EXE，并检查运行库均来自交付目录，也只能证明
 这次启动未使用外部开发库，不能等同“未安装 Python/MATLAB 的干净 Windows”验收。
 该验收尚待干净机器完成，不据此勾选全部交付验收项。
 
