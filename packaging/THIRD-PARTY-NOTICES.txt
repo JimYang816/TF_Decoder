@@ -1,0 +1,34 @@
+TF Decoder 0.1.0 — third-party components
+
+Python 3.13.9: Python Software Foundation license; see licenses/Python.
+NumPy: BSD-3-Clause and bundled runtime notices, see licenses/numpy.
+SciPy: BSD-3-Clause and bundled OpenBLAS/runtime notices, see licenses/scipy.
+PyQtGraph: MIT, see licenses/pyqtgraph.
+PySide6 / Shiboken6 / Qt 6.9.2: used under LGPLv3 (with GPLv3 terms incorporated
+by LGPLv3), rather than the optional commercial license. See licenses/Qt.
+These are unmodified dynamically linked libraries in _internal. Users may
+replace/relink these libraries and debug modifications under their licenses.
+No application restriction prohibits reverse engineering for that purpose.
+Corresponding upstream source and build instructions for the exact Qt/PySide
+version: https://download.qt.io/archive/qt/6.9/6.9.2/
+https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.9.2-src/
+https://code.qt.io/cgit/pyside/pyside-setup.git/tree/?h=v6.9.2
+https://doc.qt.io/qtforpython-6.9/building_from_source/index.html
+Qt/PySide are copyright The Qt Company Ltd. and other contributors.
+The wheel's optional commercial-license text is preserved with its metadata;
+that text does not imply this application holds a commercial Qt license.
+All wheel-supplied notices are preserved under licenses, including transitive
+packages. The build tool PyInstaller uses GPLv2-or-later with its bootloader
+exception (see licenses/pyinstaller); build tools are not a user dependency.
+Microsoft runtime DLLs, if present, are distributable runtime components
+supplied with the Python/Qt Windows distributions; their copyright remains
+with Microsoft. See https://visualstudio.microsoft.com/license-terms/.
+
+parula256.csv: numeric color table exported by writematrix(parula(256), ...)
+from MATLAB, MathWorks (R2017a-or-later palette). It is data, not MATLAB code
+or runtime. Provenance is retained here; no open-source license is asserted
+for MathWorks' table. https://www.mathworks.com/help/matlab/ref/parula.html
+
+BUILD-INFO.json identifies the actual interpreter, source revision and pinned
+distributions used to build this copy. Full bundled wheel license texts and
+metadata are in licenses/. No MATLAB or MATLAB Runtime is bundled.
