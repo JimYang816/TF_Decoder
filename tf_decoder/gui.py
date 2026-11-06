@@ -6,7 +6,7 @@ import pyqtgraph as pg
 from PySide6.QtCore import QObject, Signal, Qt, QRectF, QEvent, QTimer
 from PySide6.QtGui import QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QFileDialog, QFrame, QHBoxLayout,
-    QLabel, QMainWindow, QProgressBar, QPushButton, QVBoxLayout, QWidget,
+    QLabel, QMainWindow, QMenu, QProgressBar, QPushButton, QVBoxLayout, QWidget,
     QDockWidget, QListWidget, QListWidgetItem, QLineEdit, QAbstractSpinBox,
     QTextEdit, QPlainTextEdit, QComboBox, QAbstractSlider)
 from .application import Application, Viewport
@@ -14,6 +14,7 @@ from .application import Application, Viewport
 
 class _Completion(QObject):
     ready = Signal(object)
+    exported = Signal(object)
 
 
 class MainWindow(QMainWindow):
@@ -23,6 +24,8 @@ class MainWindow(QMainWindow):
         self.current_result = None
         self._completion = _Completion(self)
         self._completion.ready.connect(self._finished)
+        self._completion.exported.connect(self._export_finished)
+        self._exporting = False
         self.setWindowTitle("TF Decoder · RAW 时频分析")
         self.resize(1200, 780)
         self.setMinimumSize(720, 480)
@@ -41,6 +44,14 @@ class MainWindow(QMainWindow):
         self.open_button.setAccessibleName("打开 RAW 采集文件")
         self.open_button.clicked.connect(self.choose_file)
         top.addWidget(self.open_button)
+        self.export_button = QPushButton("导出 PNG")
+        self.export_button.setAccessibleName("导出当前文件 PNG，选择当前视图或全时段")
+        self.export_button.setEnabled(False)
+        export_menu = QMenu(self.export_button)
+        export_menu.addAction("导出当前视图…", lambda: self.choose_export("current"))
+        export_menu.addAction("导出全时段…", lambda: self.choose_export("full"))
+        self.export_button.setMenu(export_menu)
+        top.addWidget(self.export_button)
         self.folder_button = QPushButton('打开文件夹…')
         self.folder_button.clicked.connect(self.choose_folder)
         top.addWidget(self.folder_button)
@@ -226,6 +237,7 @@ class MainWindow(QMainWindow):
 
     def _show_pending(self):
         self.current_result = None
+        self.export_button.setEnabled(False)
         self.image.clear()
         self.reset_button.setEnabled(False)
         self.pan_button.setEnabled(False)
@@ -241,7 +253,8 @@ class MainWindow(QMainWindow):
     def _finished(self, state):
         if state is not self.application.state:
             return
-        self.progress.hide()
+        if not self._exporting:
+            self.progress.hide()
         self._refresh_browser()
         self.file_title.setText(state.path.name if state.path else '尚未打开采集文件')
         self.file_title.setToolTip(str(state.path or ''))
@@ -250,6 +263,7 @@ class MainWindow(QMainWindow):
             self.graphics.setAccessibleDescription(state.message)
             return
         self.current_result = result = state.result
+        self.export_button.setEnabled(not self._exporting)
         self.image.setImage(result.db, autoLevels=False, levels=result.levels)
         dt = (result.parameters.window_length-result.parameters.overlap)/result.parameters.sample_rate
         df = result.parameters.sample_rate/result.parameters.fft_length/1000
@@ -262,6 +276,25 @@ class MainWindow(QMainWindow):
         view = state.viewport
         self.plot.setRange(xRange=view.time_range, yRange=tuple(v/1000 for v in view.frequency_range), padding=0)
         self.graphics.setAccessibleDescription(f"{result.path.name}，{result.sample_count} 个采样点，未滤波。{state.message}")
+
+    def choose_export(self, mode):
+        directory = QFileDialog.getExistingDirectory(self, "选择 PNG 输出目录")
+        if not directory:
+            return
+        self._exporting = True
+        self.export_button.setEnabled(False)
+        self.status_label.setText("正在导出 PNG… 可继续浏览时频图。")
+        self.progress.setRange(0, 0)
+        self.progress.show()
+        future = self.application.export_png(directory, mode=mode)
+        future.add_done_callback(lambda task: self._completion.exported.emit(task.result()))
+
+    def _export_finished(self, exported):
+        self._exporting = False
+        self.status_label.setText(exported.message)
+        self.export_button.setEnabled(self.application.state.status == "ready")
+        if self.application.state.status not in ("computing", "scanning"):
+            self.progress.hide()
 
     def show_full_range(self):
         if self.current_result is not None:

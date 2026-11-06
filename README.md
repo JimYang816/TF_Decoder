@@ -16,6 +16,8 @@ Windows 使用系统中文字体和 Qt 高 DPI 支持。`Ctrl+O` 打开文件；
 
 图形默认左键拖动平移，滚轮围绕指针缩放。选择“框选放大”后左键拖出矩形放大；“平移”和“框选放大”为互斥工具，当前模式以按钮选中状态显示。`Alt+P` / `Alt+R` 切换工具，`Alt+F` 恢复全图；也可用 Tab 聚焦按钮后按空格。视口操作保留当前文件的 PSD 和全文件色阶，坐标始终显示秒和 kHz。
 
+顶栏“导出 PNG”菜单提供“导出当前视图”和“导出全时段”，再选择输出目录。当前视图保留正在查看的时间／频率范围；全时段使用全部采集时间与已应用显示频段，保留当前浏览视口。PNG 为 1400×900，包含文件身份、坐标、单位与原始 PSD 色阶；来源 `采集.raw` 输出为 `采集.png`，重名自动使用 `_1`、`_2` 后缀。后台导出期间仍可缩放或打开其他文件，底部显示完成路径或失败原因。
+
 ## 应用级公开入口
 
 后续功能和行为测试复用 `tf_decoder.Application`，Qt 展示通过这一入口读取与分析，不另设测试专用路径。
@@ -43,6 +45,8 @@ with Application() as application:
 - `AnalysisResult` 包含绝对 `path`、已应用 `parameters`、`sample_count`、电压最小／最大值 `voltage_range`、`warnings`、只读双精度 `times`（秒）、`frequencies`（Hz）、`psd`（V²/Hz，频率×时间矩阵）、`db` 与文件全时段全频率 `levels`（dB）。频率显示转换为 kHz 仅由 Qt 完成。
 - `AnalysisParameters` 是当前默认计算配置的不可变快照：96 kHz、1024 点 hanning、512 点重叠、1024 点 FFT。参数编辑与滤波由后续任务扩展。
 - `close()` 关闭后台执行器；支持上下文管理。Future 回调在工作线程运行，Qt 客户端通过 signal 收取，不能直接在回调修改控件。窗口关闭时等待正在计算的任务清理。
+- `export_png(directory, *, mode="current" | "full") -> Future[ExportResult]` 立即提交后台 PNG 导出，捕获调用时已应用的分析结果及范围；之后切换文件或改变视口不改变该任务。`export_status` 为最新任务状态（`idle`、`exporting`、`succeeded`、`failed`）；`ExportResult(status, path, viewport, message)` 含成功输出的绝对路径或明确失败原因。尚未就绪、无效模式或不可写目录返回失败结果。每次使用独占文件创建保护重名，失败清理未完成图片。导出独立于浏览状态，不改写 `state`。PNG 使用 `QImage/QPainter` 在后台渲染，不访问窗口控件；调用方须在主线程保持 `QGuiApplication`（桌面窗口已具备），缺少时返回明确失败。
+- `ApplicationState.displayed_frequency_range` 保存与缩放视口独立的已应用显示频段（Hz，当前默认为 0–Nyquist），供全时段导出使用；后续显示频段设置沿用此字段。PNG 附带来源、范围、PSD 单位、色阶及已应用参数文本元数据，方便复核。
 - `tf_decoder.gui.MainWindow(application=None)` 可注入同一应用实例；`open_file(path)` 和 `open_folder(path)` 是界面的导入路径，`current_result` 是当前已显示的结果；图形适配器为 `plot`、`image`、`color_bar`，供后续交互与导出扩展。
 
 ## 数值与颜色来源

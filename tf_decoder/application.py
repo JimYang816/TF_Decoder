@@ -91,6 +91,9 @@ class Application:
         self._lock = RLock()
         self._generation = 0
         self._state = ApplicationState()
+        self._export_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="png-export")
+        from .export import ExportResult
+        self._export_status = ExportResult("idle", message="尚未导出")
         self._browser = BrowserState()
         self._batch = 0
         self._views = {}
@@ -242,6 +245,33 @@ class Application:
                 self._state = state
         return state
 
+    @property
+    def export_status(self):
+        with self._lock:
+            return self._export_status
+
+    def export_png(self, directory: str | Path, *, mode="current") -> Future:
+        """Export an immutable applied-result/view snapshot without changing browsing state."""
+        from .export import ExportResult, write_png
+        with self._lock:
+            state = self._state
+            if mode not in ("current", "full") or state.status != "ready":
+                message = "导出模式必须为 current 或 full" if mode not in ("current", "full") else "时频图尚未就绪，无法导出"
+                self._export_status = ExportResult("failed", message=message)
+                future = Future()
+                future.set_result(self._export_status)
+                return future
+            view = state.viewport if mode == "current" else Viewport(
+                _full_view(state.result).time_range,
+                state.displayed_frequency_range or _full_view(state.result).frequency_range)
+            self._export_status = ExportResult("exporting", viewport=view, message="正在导出 PNG…")
+        def work():
+            exported = write_png(state.result, view, Path(directory), mode)
+            with self._lock:
+                self._export_status = exported
+            return exported
+        return self._export_executor.submit(work)
+
     def set_viewport(self, viewport: Viewport) -> ApplicationState:
         """Select a rectangle without recomputing PSD or file-wide color levels."""
         if not isinstance(viewport, Viewport):
@@ -282,6 +312,7 @@ class Application:
 
     def close(self):
         self._executor.shutdown(wait=True, cancel_futures=True)
+        self._export_executor.shutdown(wait=True, cancel_futures=True)
 
     def __enter__(self):
         return self
