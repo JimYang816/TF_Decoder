@@ -15,6 +15,7 @@ from .application import Application, Viewport, AnalysisParameters
 class _Completion(QObject):
     ready = Signal(object)
     exported = Signal(object)
+    batch_progress = Signal(object)
 
 
 class MainWindow(QMainWindow):
@@ -25,6 +26,7 @@ class MainWindow(QMainWindow):
         self._completion = _Completion(self)
         self._completion.ready.connect(self._finished)
         self._completion.exported.connect(self._export_finished)
+        self._completion.batch_progress.connect(self._batch_export_progress)
         self._exporting = False
         self.setWindowTitle("TF Decoder · RAW 时频分析")
         self.resize(1200, 780)
@@ -50,6 +52,7 @@ class MainWindow(QMainWindow):
         export_menu = QMenu(self.export_button)
         export_menu.addAction("导出当前视图…", lambda: self.choose_export("current"))
         export_menu.addAction("导出全时段…", lambda: self.choose_export("full"))
+        export_menu.addAction("批量导出全部文件…", self.choose_batch_export)
         self.export_button.setMenu(export_menu)
         top.addWidget(self.export_button)
         self.folder_button = QPushButton('打开文件夹…')
@@ -153,6 +156,31 @@ class MainWindow(QMainWindow):
         self.progress.setTextVisible(False)
         self.progress.hide()
         layout.addWidget(self.progress)
+        batch_row = QHBoxLayout()
+        self.batch_status_label = QLabel('尚未批量导出')
+        self.batch_status_label.setWordWrap(True)
+        self.batch_status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        batch_row.addWidget(self.batch_status_label, 1)
+        self.cancel_export_button = QPushButton('取消批量导出')
+        self.cancel_export_button.setEnabled(False)
+        self.cancel_export_button.clicked.connect(self.application.cancel_batch_export)
+        batch_row.addWidget(self.cancel_export_button)
+        self.export_details_button = QPushButton('导出明细')
+        self.export_details_button.setCheckable(True)
+        self.export_details_button.setEnabled(False)
+        batch_row.addWidget(self.export_details_button)
+        layout.addLayout(batch_row)
+        self.batch_progress = QProgressBar()
+        self.batch_progress.setAccessibleName('批量 PNG 导出文件进度')
+        self.batch_progress.hide()
+        layout.addWidget(self.batch_progress)
+        self.export_details = QPlainTextEdit()
+        self.export_details.setReadOnly(True)
+        self.export_details.setAccessibleName('批量导出逐文件结果及原因')
+        self.export_details.setMaximumHeight(130)
+        self.export_details.hide()
+        self.export_details_button.toggled.connect(self.export_details.setVisible)
+        layout.addWidget(self.export_details)
         self.setStyleSheet("""
             QWidget { background:#F5F7FA; color:#172033; font-family:'Microsoft YaHei UI'; font-size:14px; }
             QLabel#heading { font-size:22px; font-weight:600; }
@@ -351,6 +379,7 @@ class MainWindow(QMainWindow):
         self.file_title.setText(state.path.name if state.path else '尚未打开采集文件')
         self.file_title.setToolTip(str(state.path or ''))
         self.status_label.setText(state.message)
+        self.export_button.setEnabled(bool(self.application.browser.entries) and not self._exporting)
         if state.result is None:
             self.graphics.setAccessibleDescription(state.message)
             return
@@ -385,6 +414,30 @@ class MainWindow(QMainWindow):
         self.progress.show()
         future = self.application.export_png(directory, mode=mode)
         future.add_done_callback(lambda task: self._completion.exported.emit(task.result()))
+
+    def choose_batch_export(self):
+        if self.application.batch_export_status.status == 'exporting':
+            return
+        directory = QFileDialog.getExistingDirectory(self, '选择批量 PNG 输出根目录')
+        if directory:
+            self.application.export_batch_png(directory, progress=self._completion.batch_progress.emit)
+
+    def _batch_export_progress(self, state):
+        running = state.status == 'exporting'
+        self.cancel_export_button.setEnabled(running)
+        self.export_details_button.setEnabled(bool(state.entries))
+        self.batch_progress.setRange(0, max(1, len(state.entries)))
+        self.batch_progress.setValue(state.completed)
+        self.batch_progress.setVisible(bool(state.entries))
+        active = next((e.relative_path for e in state.entries if e.status == 'processing'), None)
+        self.batch_status_label.setText(
+            f'批量导出 {state.completed} / {len(state.entries)}' + (f' · {active}' if active else '')
+            if running else state.message)
+        names = {'pending': '尚未导出', 'processing': '正在导出', 'success': '成功',
+                 'warning': '警告', 'failed': '失败', 'uncompleted': '未完成'}
+        self.export_details.setPlainText('\n'.join(
+            f'{names[e.status]} · {e.relative_path}\n{e.path}\n{e.output or e.message}' +
+            (f'\n{e.message}' if e.output and e.status == 'warning' else '') for e in state.entries))
 
     def _export_finished(self, exported):
         self._exporting = False
