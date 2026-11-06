@@ -1,0 +1,74 @@
+{
+  "platform": "Windows-11-10.0.26200-SP0",
+  "processor": "AMD64 Family 25 Model 116 Stepping 1, AuthenticAMD",
+  "logical_cpus": 12,
+  "ram_bytes": 16312553472,
+  "python": "3.13.9",
+  "qt": "6.9.2",
+  "numpy": "2.5.4",
+  "qt_platform": "offscreen",
+  "cache_budget_bytes": 402653184,
+  "parameters": {
+    "sample_rate": 96000,
+    "window_length": 1024,
+    "overlap": 512,
+    "fft_length": 1024,
+    "filter_enabled": false,
+    "passband_low": 20000,
+    "passband_high": 28000,
+    "transition_width": 1000
+  },
+  "source_raw_count": 167,
+  "empty_raw_count": 2,
+  "workload_nonempty_files": 100,
+  "largest_raw_bytes": 67174400,
+  "largest_matrix_shape": [
+    513,
+    32767
+  ],
+  "largest_result_bytes": 269217776,
+  "largest_first_display": {
+    "seconds": 0.881588099999135,
+    "heartbeat_count": 80,
+    "heartbeat_max_gap_ms": 50.87439999988419
+  },
+  "folder_first_display": {
+    "seconds": 0.24610260000008566,
+    "heartbeat_count": 20,
+    "heartbeat_max_gap_ms": 29.683900000236463
+  },
+  "workload": {
+    "seconds": 63.83363730000019,
+    "heartbeat_count": 5703,
+    "heartbeat_max_gap_ms": 139.73079999959737
+  },
+  "switch_median_seconds": 0.2903200000000652,
+  "switch_max_seconds": 1.966663699999117,
+  "revisit_after_eviction": [
+    {
+      "seconds": 0.27485260000139533,
+      "heartbeat_count": 22,
+      "heartbeat_max_gap_ms": 33.36940000008326
+    },
+    {
+      "seconds": 1.4703458000003593,
+      "heartbeat_count": 139,
+      "heartbeat_max_gap_ms": 62.07940000058443
+    },
+    {
+      "seconds": 0.23752540000168665,
+      "heartbeat_count": 20,
+      "heartbeat_max_gap_ms": 34.6200999993016
+    }
+  ],
+  "adjacent_switch_after_2s_prefetch_dwell": {
+    "seconds": 0.03458460000001651,
+    "heartbeat_count": 1,
+    "heartbeat_max_gap_ms": 34.11640000012994
+  },
+  "zoom_paint_median_ms": 16.5978000004543,
+  "zoom_paint_max_ms": 30.6600999992952,
+  "peak_rss_bytes": 958504960,
+  "settled_rss_bytes": 451211264,
+  "rss_sample_interval_ms": 10
+}

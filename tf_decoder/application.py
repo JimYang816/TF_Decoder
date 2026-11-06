@@ -257,7 +257,7 @@ class Application:
                 if key != self._cache_key(path, parameters):
                     raise OSError("采集文件在计算期间发生变化，请重新打开")
                 with self._lock:
-                    if batch == self._batch and configuration == self._configuration:
+                    if (generation, batch, configuration) == (self._generation, self._batch, self._configuration):
                         self._remember(key, result)
             message = ('计算完成 · Chebyshev I 带通滤波' if parameters.filter_enabled else '计算完成 · 未滤波')
             if result.warnings:
@@ -310,7 +310,7 @@ class Application:
 
     def _prefetch_neighbors(self, generation, batch, parameters, configuration):
         index = self._browser.current_index
-        if index is None:
+        if index is None or self._cache_budget == 0:
             return
         for neighbor in (index + 1, index - 1):
             if 0 <= neighbor < len(self._browser.entries):
