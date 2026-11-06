@@ -3,10 +3,12 @@ import sys
 from pathlib import Path
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QObject, Signal, Qt, QRectF
+from PySide6.QtCore import QObject, Signal, Qt, QRectF, QEvent, QTimer
 from PySide6.QtGui import QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QFileDialog, QFrame, QHBoxLayout,
-    QLabel, QMainWindow, QProgressBar, QPushButton, QVBoxLayout, QWidget)
+    QLabel, QMainWindow, QProgressBar, QPushButton, QVBoxLayout, QWidget,
+    QDockWidget, QListWidget, QListWidgetItem, QLineEdit, QAbstractSpinBox,
+    QTextEdit, QPlainTextEdit, QComboBox, QAbstractSlider)
 from .application import Application, Viewport
 
 
@@ -39,6 +41,24 @@ class MainWindow(QMainWindow):
         self.open_button.setAccessibleName("打开 RAW 采集文件")
         self.open_button.clicked.connect(self.choose_file)
         top.addWidget(self.open_button)
+        self.folder_button = QPushButton('打开文件夹…')
+        self.folder_button.clicked.connect(self.choose_folder)
+        top.addWidget(self.folder_button)
+        self.list_toggle = QPushButton('文件列表')
+        self.list_toggle.setCheckable(True)
+        self.list_toggle.setChecked(True)
+        top.addWidget(self.list_toggle)
+        self.file_dock = QDockWidget('采集文件', self)
+        self.file_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.file_list = QListWidget()
+        self.file_list.setAccessibleName('当前批次采集文件列表')
+        self.file_list.setMinimumWidth(200)
+        self.file_dock.setWidget(self.file_list)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.file_dock)
+        self.resizeDocks([self.file_dock], [240], Qt.Horizontal)
+        self.list_toggle.toggled.connect(self.file_dock.setVisible)
+        self.file_dock.visibilityChanged.connect(self.list_toggle.setChecked)
+        self.file_list.currentRowChanged.connect(self._select_row)
         layout.addLayout(top)
         self.file_title = QLabel("尚未打开采集文件")
         self.file_title.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -96,6 +116,20 @@ class MainWindow(QMainWindow):
         self.color_bar.setImageItem(self.image, insert_in=self.plot)
         self.graphics.setAccessibleName("时频图，横轴时间秒，纵轴频率 kHz，颜色为功率谱密度 dB")
         layout.addWidget(self.graphics, 1)
+        navigation = QHBoxLayout()
+        self.previous_button = QPushButton('上一张')
+        self.next_button = QPushButton('下一张')
+        self.position_label = QLabel('0 / 0')
+        self.previous_button.clicked.connect(lambda: self._browse(self.application.previous_file))
+        self.next_button.clicked.connect(lambda: self._browse(self.application.next_file))
+        navigation.addStretch()
+        navigation.addWidget(self.previous_button)
+        navigation.addWidget(self.position_label)
+        navigation.addWidget(self.next_button)
+        navigation.addStretch()
+        layout.addLayout(navigation)
+        self.summary_label = QLabel('尚未导入文件')
+        layout.addWidget(self.summary_label)
         self.status_label = QLabel("请选择 RAW 采集文件。默认显示未滤波信号的全时段时频图。")
         self.status_label.setWordWrap(True)
         self.status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -119,9 +153,68 @@ class MainWindow(QMainWindow):
             QPushButton#primary:hover { background:#1E40AF; }
             QPushButton#primary:focus { border:2px solid #172033; }
             QProgressBar::chunk { background:#2563EB; }
+            QListWidget { background:white; border:1px solid #D6DEE8; }
+            QListWidget::item { padding:8px; border-bottom:1px solid #D6DEE8; }
+            QListWidget::item:selected { background:#EFF6FF; color:#1E40AF; }
+            QListWidget:focus { border:2px solid #1E40AF; }
         """)
         self.open_shortcut = QShortcut(QKeySequence.Open, self)
         self.open_shortcut.activated.connect(self.choose_file)
+        self._browser_snapshot = None
+        self._browser_timer = QTimer(self)
+        self._browser_timer.timeout.connect(self._refresh_browser)
+        self._browser_timer.start(100)
+        QApplication.instance().installEventFilter(self)
+        self._refresh_browser()
+
+    def choose_folder(self):
+        path = QFileDialog.getExistingDirectory(self, '打开 RAW 采集文件夹')
+        if path:
+            self.open_folder(path)
+
+    def open_folder(self, path):
+        self._browse(lambda: self.application.open_folder(path))
+
+    def _select_row(self, row):
+        if row >= 0 and row != self.application.browser.current_index:
+            self._browse(lambda: self.application.select_file(row))
+
+    def _browse(self, request):
+        future = request()
+        self._show_pending()
+        self._refresh_browser()
+        future.add_done_callback(lambda task: self._completion.ready.emit(task.result()))
+
+    def _refresh_browser(self):
+        browser = self.application.browser
+        if browser == self._browser_snapshot:
+            return
+        self._browser_snapshot = browser
+        self.file_list.blockSignals(True)
+        self.file_list.clear()
+        names = {'pending': '尚未分析', 'computing': '计算中', 'success': '成功', 'warning': '警告', 'failed': '失败'}
+        for index, entry in enumerate(browser.entries):
+            item = QListWidgetItem(f'{index+1}. {entry.path.name}\n{entry.relative_path.parent} · {names[entry.status]}')
+            item.setToolTip(f'{entry.relative_path}\n{entry.message}')
+            self.file_list.addItem(item)
+        if browser.current_index is not None:
+            self.file_list.setCurrentRow(browser.current_index)
+        self.file_list.blockSignals(False)
+        index = browser.current_index
+        self.position_label.setText(f'{index+1 if index is not None else 0} / {len(browser.entries)}')
+        self.previous_button.setEnabled(index is not None and index > 0)
+        self.next_button.setEnabled(index is not None and index < len(browser.entries)-1)
+        counts = browser.summary
+        self.summary_label.setText(f'成功 {counts["success"]} · 警告 {counts["warning"]} · 失败 {counts["failed"]} · 待分析 {counts["pending"]} · 计算中 {counts["computing"]}' + (f' · {browser.message}' if browser.message else ''))
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.KeyPress and event.key() in (Qt.Key_Left, Qt.Key_Right) and not event.modifiers():
+            focus = QApplication.focusWidget()
+            if focus is not None and focus.window() is self and not isinstance(focus,
+                    (QLineEdit, QAbstractSpinBox, QTextEdit, QPlainTextEdit, QComboBox, QAbstractSlider)):
+                self._browse(self.application.previous_file if event.key() == Qt.Key_Left else self.application.next_file)
+                return True
+        return super().eventFilter(watched, event)
 
     def choose_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "打开 RAW 采集文件", "", "RAW 采集文件 (*.raw *.RAW);;所有文件 (*)")
@@ -129,24 +222,29 @@ class MainWindow(QMainWindow):
             self.open_file(path)
 
     def open_file(self, path):
+        self._browse(lambda: self.application.open_file(path))
+
+    def _show_pending(self):
         self.current_result = None
         self.image.clear()
         self.reset_button.setEnabled(False)
         self.pan_button.setEnabled(False)
         self.rectangle_button.setEnabled(False)
         self.plot.getViewBox().setMouseEnabled(False, False)
-        self.file_title.setText(Path(path).name)
-        self.file_title.setToolTip(str(path))
-        self.status_label.setText("正在读取并计算时频图…")
+        state = self.application.state
+        self.file_title.setText(state.path.name if state.path else '尚未打开采集文件')
+        self.file_title.setToolTip(str(state.path or ''))
+        self.status_label.setText(state.message)
         self.progress.setRange(0, 0)
         self.progress.show()
-        future = self.application.open_file(path)
-        future.add_done_callback(lambda task: self._completion.ready.emit(task.result()))
 
     def _finished(self, state):
         if state is not self.application.state:
             return
         self.progress.hide()
+        self._refresh_browser()
+        self.file_title.setText(state.path.name if state.path else '尚未打开采集文件')
+        self.file_title.setToolTip(str(state.path or ''))
         self.status_label.setText(state.message)
         if state.result is None:
             self.graphics.setAccessibleDescription(state.message)
@@ -161,7 +259,8 @@ class MainWindow(QMainWindow):
         self.pan_button.setEnabled(True)
         self.rectangle_button.setEnabled(True)
         self.plot.getViewBox().setMouseEnabled(True, True)
-        self.show_full_range()
+        view = state.viewport
+        self.plot.setRange(xRange=view.time_range, yRange=tuple(v/1000 for v in view.frequency_range), padding=0)
         self.graphics.setAccessibleDescription(f"{result.path.name}，{result.sample_count} 个采样点，未滤波。{state.message}")
 
     def show_full_range(self):
