@@ -1,6 +1,6 @@
 # TF Decoder
 
-中文离线 RAW 时频图桌面应用。支持打开单个 RAW 文件或递归导入文件夹，按需计算未滤波时频图并交互查看局部。
+中文离线 RAW 时频图桌面应用。支持打开单个 RAW 文件或递归导入文件夹，统一应用计算与滤波参数，按需计算时频图并交互查看局部。
 
 开发启动（Python 3.11+）：
 
@@ -43,7 +43,10 @@ with Application() as application:
 - `Viewport(time_range, frequency_range)` 是不可变视口，范围为有限、递增的二元组，单位分别为秒和 Hz；Qt 只在展示时将频率换为 kHz。未就绪时 `state.viewport` 为 `None`。首次分析完成后为全时段、0–Nyquist。
 - `set_viewport(Viewport)` 选择矩形；`zoom_viewport(factor, *, time, frequency)` 围绕指定坐标缩放（比例小于 1 为放大）；`pan_viewport(time_delta, frequency_delta)` 平移；`restore_full_view()` 恢复全时段及适用频率范围。这些方法同步返回更新后的状态，保留原 `AnalysisResult` 对象与文件身份，不重新计算 PSD 或色阶；无有效结果时抛出 `ValueError`。视口可移至数据区域外，便于平移查看边界。
 - `AnalysisResult` 包含绝对 `path`、已应用 `parameters`、`sample_count`、电压最小／最大值 `voltage_range`、`warnings`、只读双精度 `times`（秒）、`frequencies`（Hz）、`psd`（V²/Hz，频率×时间矩阵）、`db` 与文件全时段全频率 `levels`（dB）。频率显示转换为 kHz 仅由 Qt 完成。
-- `AnalysisParameters` 是当前默认计算配置的不可变快照：96 kHz、1024 点 hanning、512 点重叠、1024 点 FFT。参数编辑与滤波由后续任务扩展。
+- `AnalysisParameters` 是不可变计算配置：默认 `sample_rate=96000`、`window_length=1024`、`overlap=512`、`fft_length=1024`、`filter_enabled=False`、`passband_low=20000`、`passband_high=28000`、`transition_width=1000`，频率单位为 Hz。启用滤波使用 Chebyshev I，通带纹波 0.5 dB、阻带衰减 10 dB，零初始状态因果滤波，RAW 块间保留滤波状态，STFT 窗跨块连续。
+- `apply_parameters(AnalysisParameters, *, displayed_frequency_range=None) -> Future[ApplicationState]` 校验后统一更新当前整批配置、清除旧配置视口并在后台重新计算当前文件；后续切图和导入沿用同一份配置。`applied_parameters` 返回当前已应用计算配置。采样率必须有限且为正；窗长至少 2、重叠非负且小于窗长、FFT 长度不小于窗长，三者为整数。启用滤波须满足 `0 < low-transition < low < high < high+transition < sample_rate/2`，否则同步抛出中文 `ValueError` 并保留原配置与结果。
+- `displayed_frequency_range=(low, high)` 使用 Hz，须在 0 至 Nyquist 内有限递增，省略时为完整范围。它独立于滤波，写入 `state.displayed_frequency_range`；仅改变显示频段时保留同一 `AnalysisResult`、PSD 和全文件色阶，当前视口频率更新，恢复全图及全时段导出使用此频段。计算中的旧请求不能覆盖新配置。
+- 右侧参数栏可收起，常用滤波和显示频段直接可见；高级参数默认折叠。输入值只在点击“应用到整批”后生效，无效输入保留原图并在参数区提示；图上方标识已应用配置。计算期间可继续编辑、应用及切图。
 - `close()` 关闭后台执行器；支持上下文管理。Future 回调在工作线程运行，Qt 客户端通过 signal 收取，不能直接在回调修改控件。窗口关闭时等待正在计算的任务清理。
 - `export_png(directory, *, mode="current" | "full") -> Future[ExportResult]` 立即提交后台 PNG 导出，捕获调用时已应用的分析结果及范围；之后切换文件或改变视口不改变该任务。`export_status` 为最新任务状态（`idle`、`exporting`、`succeeded`、`failed`）；`ExportResult(status, path, viewport, message)` 含成功输出的绝对路径或明确失败原因。尚未就绪、无效模式或不可写目录返回失败结果。每次使用独占文件创建保护重名，失败清理未完成图片。导出独立于浏览状态，不改写 `state`。PNG 使用 `QImage/QPainter` 在后台渲染，不访问窗口控件；调用方须在主线程保持 `QGuiApplication`（桌面窗口已具备），缺少时返回明确失败。
 - `ApplicationState.displayed_frequency_range` 保存与缩放视口独立的已应用显示频段（Hz，当前默认为 0–Nyquist），供全时段导出使用；后续显示频段设置沿用此字段。PNG 附带来源、范围、PSD 单位、色阶及已应用参数文本元数据，方便复核。
