@@ -8,8 +8,8 @@ from PySide6.QtGui import QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QFileDialog, QFrame, QHBoxLayout,
     QLabel, QMainWindow, QMenu, QProgressBar, QPushButton, QVBoxLayout, QWidget,
     QDockWidget, QListWidget, QListWidgetItem, QLineEdit, QAbstractSpinBox,
-    QTextEdit, QPlainTextEdit, QComboBox, QAbstractSlider)
-from .application import Application, Viewport
+    QTextEdit, QPlainTextEdit, QComboBox, QAbstractSlider, QCheckBox, QFormLayout, QScrollArea)
+from .application import Application, Viewport, AnalysisParameters
 
 
 class _Completion(QObject):
@@ -70,6 +70,7 @@ class MainWindow(QMainWindow):
         self.list_toggle.toggled.connect(self.file_dock.setVisible)
         self.file_dock.visibilityChanged.connect(self.list_toggle.setChecked)
         self.file_list.currentRowChanged.connect(self._select_row)
+        self._build_parameters(top)
         layout.addLayout(top)
         self.file_title = QLabel("尚未打开采集文件")
         self.file_title.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -77,6 +78,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.file_title)
         info = QHBoxLayout()
         self.configuration_label = QLabel("未滤波 · 96 kHz · 窗长 1024 · 重叠 512 · FFT 1024")
+        self.configuration_label.setWordWrap(True)
         info.addWidget(self.configuration_label)
         info.addStretch()
         layout.addLayout(info)
@@ -168,6 +170,8 @@ class MainWindow(QMainWindow):
             QListWidget::item { padding:8px; border-bottom:1px solid #D6DEE8; }
             QListWidget::item:selected { background:#EFF6FF; color:#1E40AF; }
             QListWidget:focus { border:2px solid #1E40AF; }
+            QLineEdit { background:white; border:1px solid #526174; border-radius:4px; padding:6px; }
+            QLineEdit:focus { border:2px solid #1E40AF; padding:5px; }
         """)
         self.open_shortcut = QShortcut(QKeySequence.Open, self)
         self.open_shortcut.activated.connect(self.choose_file)
@@ -177,6 +181,94 @@ class MainWindow(QMainWindow):
         self._browser_timer.start(100)
         QApplication.instance().installEventFilter(self)
         self._refresh_browser()
+
+    def _build_parameters(self, top):
+        self.parameters_toggle = QPushButton('参数')
+        self.parameters_toggle.setCheckable(True)
+        self.parameters_toggle.setChecked(True)
+        top.addWidget(self.parameters_toggle)
+        self.parameter_dock = QDockWidget('整批分析参数', self)
+        self.parameter_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setSpacing(8)
+        self.filter_checkbox = QCheckBox('启用真实带通滤波')
+        layout.addWidget(self.filter_checkbox)
+        form = QFormLayout()
+        layout.addLayout(form)
+        parameters = self.application.applied_parameters
+        def field(name, label, value, parent_form):
+            edit = QLineEdit(str(value))
+            edit.setAccessibleName(label)
+            edit.setMaximumWidth(120)
+            setattr(self, name, edit)
+            parent_form.addRow(label, edit)
+            return edit
+        field('passband_low_edit', '通带下限 (kHz)', parameters.passband_low/1000, form)
+        field('passband_high_edit', '通带上限 (kHz)', parameters.passband_high/1000, form)
+        field('display_low_edit', '显示下限 (kHz)', 0, form)
+        field('display_high_edit', '显示上限 (kHz)', parameters.sample_rate/2000, form)
+        self.advanced_toggle = QPushButton('高级参数')
+        self.advanced_toggle.setCheckable(True)
+        self.advanced_toggle.setAccessibleName('展开或折叠高级参数')
+        layout.addWidget(self.advanced_toggle)
+        self.advanced_panel = QWidget()
+        advanced = QFormLayout(self.advanced_panel)
+        advanced.setContentsMargins(0, 0, 0, 0)
+        field('sample_rate_edit', '采样率 (Hz)', parameters.sample_rate, advanced)
+        field('window_length_edit', '窗长 (点)', parameters.window_length, advanced)
+        field('overlap_edit', '重叠量 (点)', parameters.overlap, advanced)
+        field('fft_length_edit', 'FFT 长度 (点)', parameters.fft_length, advanced)
+        field('transition_edit', '过渡带 (kHz)', parameters.transition_width/1000, advanced)
+        layout.addWidget(self.advanced_panel)
+        self.advanced_panel.hide()
+        self.advanced_toggle.toggled.connect(self.advanced_panel.setVisible)
+        self.apply_button = QPushButton('应用到整批 (&A)')
+        self.apply_button.setObjectName('primary')
+        self.apply_button.clicked.connect(self.apply_parameters)
+        layout.addWidget(self.apply_button)
+        self.parameter_error = QLabel('修改后点击应用；当前图使用上方已应用配置。')
+        self.parameter_error.setStyleSheet('color:#526174')
+        self.parameter_error.setWordWrap(True)
+        layout.addWidget(self.parameter_error)
+        layout.addStretch()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(panel)
+        self.parameter_dock.setWidget(scroll)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.parameter_dock)
+        self.resizeDocks([self.parameter_dock], [280], Qt.Horizontal)
+        self.parameters_toggle.toggled.connect(self.parameter_dock.setVisible)
+        self.parameter_dock.visibilityChanged.connect(self.parameters_toggle.setChecked)
+
+    def apply_parameters(self):
+        try:
+            def number(edit, label, integer=False):
+                try:
+                    return int(edit.text()) if integer else float(edit.text())
+                except ValueError:
+                    edit.setFocus()
+                    raise ValueError(f'{label}必须为' + ('整数' if integer else '有效数值'))
+            parameters = AnalysisParameters(
+                sample_rate=number(self.sample_rate_edit, '采样率'),
+                window_length=number(self.window_length_edit, '窗长', True),
+                overlap=number(self.overlap_edit, '重叠量', True),
+                fft_length=number(self.fft_length_edit, 'FFT 长度', True),
+                filter_enabled=self.filter_checkbox.isChecked(),
+                passband_low=1000*number(self.passband_low_edit, '通带下限'),
+                passband_high=1000*number(self.passband_high_edit, '通带上限'),
+                transition_width=1000*number(self.transition_edit, '过渡带'))
+            bounds = (1000*number(self.display_low_edit, '显示下限'), 1000*number(self.display_high_edit, '显示上限'))
+            future = self.application.apply_parameters(parameters, displayed_frequency_range=bounds)
+        except ValueError as error:
+            self.parameter_error.setStyleSheet('color:#B91C1C')
+            self.parameter_error.setText(str(error))
+            return
+        self.parameter_error.setStyleSheet('color:#526174')
+        self.parameter_error.setText('参数已应用到整批。')
+        self._show_pending()
+        self._refresh_browser()
+        future.add_done_callback(lambda task: self._completion.ready.emit(task.result()))
 
     def choose_folder(self):
         path = QFileDialog.getExistingDirectory(self, '打开 RAW 采集文件夹')
@@ -263,6 +355,11 @@ class MainWindow(QMainWindow):
             self.graphics.setAccessibleDescription(state.message)
             return
         self.current_result = result = state.result
+        p = result.parameters
+        filtering = f'带通 {p.passband_low/1000:g}–{p.passband_high/1000:g} kHz' if p.filter_enabled else '未滤波'
+        bounds = state.displayed_frequency_range
+        self.configuration_label.setText(f'已应用：{filtering} · {p.sample_rate/1000:g} kHz · 窗长 {p.window_length} · 重叠 {p.overlap} · FFT {p.fft_length} · 显示 {bounds[0]/1000:g}–{bounds[1]/1000:g} kHz')
+        self.configuration_label.setToolTip(str(p))
         self.export_button.setEnabled(not self._exporting)
         self.image.setImage(result.db, autoLevels=False, levels=result.levels)
         dt = (result.parameters.window_length-result.parameters.overlap)/result.parameters.sample_rate
@@ -275,7 +372,7 @@ class MainWindow(QMainWindow):
         self.plot.getViewBox().setMouseEnabled(True, True)
         view = state.viewport
         self.plot.setRange(xRange=view.time_range, yRange=tuple(v/1000 for v in view.frequency_range), padding=0)
-        self.graphics.setAccessibleDescription(f"{result.path.name}，{result.sample_count} 个采样点，未滤波。{state.message}")
+        self.graphics.setAccessibleDescription(f"{result.path.name}，{result.sample_count} 个采样点，{filtering}。{state.message}")
 
     def choose_export(self, mode):
         directory = QFileDialog.getExistingDirectory(self, "选择 PNG 输出目录")
