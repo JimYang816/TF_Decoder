@@ -1,5 +1,6 @@
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import math
 from pathlib import Path
 from threading import RLock
 import numpy as np
@@ -28,11 +29,26 @@ class AnalysisResult:
 
 
 @dataclass(frozen=True)
+class Viewport:
+    """Visible coordinates in seconds and Hz; independent of analysis arrays."""
+    time_range: tuple[float, float]
+    frequency_range: tuple[float, float]
+
+    def __post_init__(self):
+        for name in ("time_range", "frequency_range"):
+            bounds = tuple(getattr(self, name))
+            if len(bounds) != 2 or not all(math.isfinite(v) for v in bounds) or bounds[0] >= bounds[1]:
+                raise ValueError("视口范围必须为有限且递增的两个坐标")
+            object.__setattr__(self, name, bounds)
+
+
+@dataclass(frozen=True)
 class ApplicationState:
     status: str = "idle"
     path: Path | None = None
     result: AnalysisResult | None = None
     message: str = "请选择 RAW 采集文件"
+    viewport: Viewport | None = None
 
 
 class Application:
@@ -64,13 +80,50 @@ class Application:
         try:
             result = _compute(path, AnalysisParameters())
             message = "；".join(result.warnings) if result.warnings else "计算完成 · 未滤波"
-            state = ApplicationState("ready", path, result, message)
+            state = ApplicationState("ready", path, result, message, _full_view(result))
         except (OSError, ValueError) as error:
             state = ApplicationState("failed", path, message=f"{path}: {error}")
         with self._lock:
             if generation == self._generation:
                 self._state = state
         return state
+
+    def set_viewport(self, viewport: Viewport) -> ApplicationState:
+        """Select a rectangle without recomputing PSD or file-wide color levels."""
+        if not isinstance(viewport, Viewport):
+            raise TypeError("viewport must be a Viewport")
+        with self._lock:
+            if self._state.status != "ready":
+                raise ValueError("请先打开有效的 RAW 采集文件")
+            self._state = replace(self._state, viewport=viewport)
+            return self._state
+
+    def zoom_viewport(self, factor: float, *, time: float, frequency: float) -> ApplicationState:
+        """Scale both spans around a pointer in seconds/Hz; factor < 1 zooms in."""
+        if not all(math.isfinite(v) for v in (factor, time, frequency)) or factor <= 0:
+            raise ValueError("缩放比例必须为有限正数，指针坐标必须有限")
+        with self._lock:
+            view = self._state.viewport
+            if view is None:
+                raise ValueError("请先打开有效的 RAW 采集文件")
+            return self.set_viewport(Viewport(
+                tuple(time + (v-time)*factor for v in view.time_range),
+                tuple(frequency + (v-frequency)*factor for v in view.frequency_range)))
+
+    def pan_viewport(self, time_delta: float, frequency_delta: float) -> ApplicationState:
+        """Translate the visible coordinates in seconds/Hz."""
+        with self._lock:
+            view = self._state.viewport
+            if view is None:
+                raise ValueError("请先打开有效的 RAW 采集文件")
+            return self.set_viewport(Viewport(tuple(v+time_delta for v in view.time_range),
+                                              tuple(v+frequency_delta for v in view.frequency_range)))
+
+    def restore_full_view(self) -> ApplicationState:
+        with self._lock:
+            if self._state.result is None:
+                raise ValueError("请先打开有效的 RAW 采集文件")
+            return self.set_viewport(_full_view(self._state.result))
 
     def close(self):
         self._executor.shutdown(wait=True, cancel_futures=True)
@@ -80,6 +133,11 @@ class Application:
 
     def __exit__(self, *args):
         self.close()
+
+
+def _full_view(result):
+    return Viewport((0, result.sample_count/result.parameters.sample_rate),
+                    (0, result.parameters.sample_rate/2))
 
 
 def _compute(path, parameters):

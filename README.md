@@ -1,6 +1,6 @@
 # TF Decoder
 
-中文离线 RAW 时频图桌面应用。目前支持打开一个 RAW 文件并计算未滤波全时段时频图。
+中文离线 RAW 时频图桌面应用。目前支持打开一个 RAW 文件，计算未滤波全时段时频图并交互查看局部。
 
 开发启动（Python 3.11+）：
 
@@ -11,6 +11,8 @@ python -m pytest
 ```
 
 Windows 使用系统中文字体和 Qt 高 DPI 支持。`Ctrl+O` 打开文件；失败原因和残缺尾块警告显示在窗口底部，原文件只读。
+
+图形默认左键拖动平移，滚轮围绕指针缩放。选择“框选放大”后左键拖出矩形放大；“平移”和“框选放大”为互斥工具，当前模式以按钮选中状态显示。`Alt+P` / `Alt+R` 切换工具，`Alt+F` 恢复全图；也可用 Tab 聚焦按钮后按空格。视口操作保留当前文件的 PSD 和全文件色阶，坐标始终显示秒和 kHz。
 
 ## 应用级公开入口
 
@@ -30,7 +32,9 @@ with Application() as application:
 ```
 
 - `open_file(str | Path) -> Future[ApplicationState]` 立即将 `state` 更新为 `computing`，后台完成后返回 `ready` 或 `failed`。只有最新请求可更新当前 `state`；每个 Future 仍返回各自请求的快照。
-- `state` 是不可变 `ApplicationState(status, path, result, message)`；初始状态为 `idle`。失败包含完整来源路径与原因，下一次打开可正常恢复。
+- `state` 是不可变 `ApplicationState(status, path, result, message, viewport)`；初始状态为 `idle`。失败包含完整来源路径与原因，下一次打开可正常恢复。
+- `Viewport(time_range, frequency_range)` 是不可变视口，范围为有限、递增的二元组，单位分别为秒和 Hz；Qt 只在展示时将频率换为 kHz。未就绪时 `state.viewport` 为 `None`。首次分析完成后为全时段、0–Nyquist。
+- `set_viewport(Viewport)` 选择矩形；`zoom_viewport(factor, *, time, frequency)` 围绕指定坐标缩放（比例小于 1 为放大）；`pan_viewport(time_delta, frequency_delta)` 平移；`restore_full_view()` 恢复全时段及适用频率范围。这些方法同步返回更新后的状态，保留原 `AnalysisResult` 对象与文件身份，不重新计算 PSD 或色阶；无有效结果时抛出 `ValueError`。视口可移至数据区域外，便于平移查看边界。
 - `AnalysisResult` 包含绝对 `path`、已应用 `parameters`、`sample_count`、电压最小／最大值 `voltage_range`、`warnings`、只读双精度 `times`（秒）、`frequencies`（Hz）、`psd`（V²/Hz，频率×时间矩阵）、`db` 与文件全时段全频率 `levels`（dB）。频率显示转换为 kHz 仅由 Qt 完成。
 - `AnalysisParameters` 是当前默认计算配置的不可变快照：96 kHz、1024 点 hanning、512 点重叠、1024 点 FFT。参数编辑与滤波由后续任务扩展。
 - `close()` 关闭后台执行器；支持上下文管理。Future 回调在工作线程运行，Qt 客户端通过 signal 收取，不能直接在回调修改控件。窗口关闭时等待正在计算的任务清理。

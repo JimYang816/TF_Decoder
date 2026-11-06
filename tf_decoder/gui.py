@@ -5,9 +5,9 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QObject, Signal, Qt, QRectF
 from PySide6.QtGui import QFont, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout,
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QFileDialog, QFrame, QHBoxLayout,
     QLabel, QMainWindow, QProgressBar, QPushButton, QVBoxLayout, QWidget)
-from .application import Application
+from .application import Application, Viewport
 
 
 class _Completion(QObject):
@@ -48,16 +48,43 @@ class MainWindow(QMainWindow):
         self.configuration_label = QLabel("未滤波 · 96 kHz · 窗长 1024 · 重叠 512 · FFT 1024")
         info.addWidget(self.configuration_label)
         info.addStretch()
+        layout.addLayout(info)
+        tools = QHBoxLayout()
+        self.mode_group = QButtonGroup(self)
+        self.pan_button = QPushButton("平移 (&P)")
+        self.rectangle_button = QPushButton("框选放大 (&R)")
+        for button, tooltip in (
+            (self.pan_button, "平移模式：按住左键拖动；滚轮围绕指针缩放（Alt+P）"),
+            (self.rectangle_button, "框选放大模式：左键拖出矩形放大；滚轮仍围绕指针缩放（Alt+R）"),
+        ):
+            button.setCheckable(True)
+            button.setEnabled(False)
+            button.setToolTip(tooltip)
+            self.mode_group.addButton(button)
+            tools.addWidget(button)
+        self.pan_button.setChecked(True)
+        self.pan_button.toggled.connect(lambda checked: self._set_drag_mode(False) if checked else None)
+        self.rectangle_button.toggled.connect(lambda checked: self._set_drag_mode(True) if checked else None)
+        tools.addStretch()
         self.reset_button = QPushButton("恢复全图")
+        self.reset_button.setToolTip("恢复当前文件全时段和适用频率范围（Alt+F）；保留当前工具模式")
+        self.reset_button.setShortcut(QKeySequence("Alt+F"))
         self.reset_button.setEnabled(False)
         self.reset_button.clicked.connect(self.show_full_range)
-        info.addWidget(self.reset_button)
-        layout.addLayout(info)
+        tools.addWidget(self.reset_button)
+        layout.addLayout(tools)
         pg.setConfigOptions(background="w", foreground="#172033", antialias=False)
         self.graphics = pg.GraphicsLayoutWidget()
         self.plot = self.graphics.addPlot()
         self.plot.setLabel("bottom", "时间", units="s")
         self.plot.setLabel("left", "频率", units="kHz")
+        self.plot.getAxis("bottom").enableAutoSIPrefix(False)
+        self.plot.getAxis("left").enableAutoSIPrefix(False)
+        self.plot.hideButtons()
+        self.plot.getViewBox().setMouseMode(pg.ViewBox.PanMode)
+        self.plot.getViewBox().setMouseEnabled(False, False)
+        self.plot.getViewBox().sigRangeChanged.connect(self._viewport_changed)
+        self._set_drag_mode(False)
         self.plot.setMenuEnabled(False)
         self.plot.showGrid(x=True, y=True, alpha=0.12)
         self.image = pg.ImageItem(axisOrder="row-major")
@@ -85,6 +112,7 @@ class MainWindow(QMainWindow):
             QPushButton { background:white; border:1px solid #526174; border-radius:6px; padding:8px 16px; min-height:22px; }
             QPushButton:hover { background:#EFF6FF; }
             QPushButton:pressed { background:#D6DEE8; }
+            QPushButton:checked { background:#EFF6FF; color:#1E40AF; border-color:#1E40AF; }
             QPushButton:focus { border:2px solid #1E40AF; padding:7px 15px; }
             QPushButton:disabled { color:#526174; border-color:#D6DEE8; }
             QPushButton#primary { background:#2563EB; color:white; border-color:#2563EB; }
@@ -104,6 +132,9 @@ class MainWindow(QMainWindow):
         self.current_result = None
         self.image.clear()
         self.reset_button.setEnabled(False)
+        self.pan_button.setEnabled(False)
+        self.rectangle_button.setEnabled(False)
+        self.plot.getViewBox().setMouseEnabled(False, False)
         self.file_title.setText(Path(path).name)
         self.file_title.setToolTip(str(path))
         self.status_label.setText("正在读取并计算时频图…")
@@ -127,14 +158,27 @@ class MainWindow(QMainWindow):
         self.image.setRect(QRectF(result.times[0]-dt/2, -df/2, len(result.times)*dt, len(result.frequencies)*df))
         self.color_bar.setLevels(result.levels)
         self.reset_button.setEnabled(True)
+        self.pan_button.setEnabled(True)
+        self.rectangle_button.setEnabled(True)
+        self.plot.getViewBox().setMouseEnabled(True, True)
         self.show_full_range()
         self.graphics.setAccessibleDescription(f"{result.path.name}，{result.sample_count} 个采样点，未滤波。{state.message}")
 
     def show_full_range(self):
         if self.current_result is not None:
-            result = self.current_result
-            self.plot.setRange(xRange=(0, result.sample_count/result.parameters.sample_rate),
-                               yRange=(0, result.parameters.sample_rate/2000), padding=0)
+            view = self.application.restore_full_view().viewport
+            self.plot.setRange(xRange=view.time_range,
+                               yRange=tuple(v/1000 for v in view.frequency_range), padding=0)
+
+    def _set_drag_mode(self, rectangle):
+        box = self.plot.getViewBox()
+        box.rbScaleBox.hide()
+        box.setMouseMode(pg.ViewBox.RectMode if rectangle else pg.ViewBox.PanMode)
+        self.graphics.setCursor(Qt.CrossCursor if rectangle else Qt.OpenHandCursor)
+
+    def _viewport_changed(self, box, ranges):
+        if self.current_result is not None and self.application.state.status == "ready":
+            self.application.set_viewport(Viewport(tuple(ranges[0]), tuple(v*1000 for v in ranges[1])))
 
     def closeEvent(self, event):
         self.application.close()
