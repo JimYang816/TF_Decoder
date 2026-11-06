@@ -5,6 +5,8 @@ import os
 import re
 from pathlib import Path
 from threading import Event, RLock
+from collections import OrderedDict
+from .scheduling import AnalysisExecutor
 import numpy as np
 from scipy import signal
 
@@ -113,8 +115,14 @@ class Application:
     Only the most recent request may update ``state``. Results and arrays are
     immutable; callbacks run on the worker and UI clients must marshal to Qt.
     """
-    def __init__(self):
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="raw-analysis")
+    def __init__(self, *, cache_budget_bytes=384 * 1024**2):
+        if isinstance(cache_budget_bytes, bool) or not isinstance(cache_budget_bytes, int) or cache_budget_bytes < 0:
+            raise ValueError("缓存预算必须为非负整数字节数")
+        self._executor = AnalysisExecutor()
+        self._cache_budget = cache_budget_bytes
+        self._cache = OrderedDict()
+        self._cache_bytes = 0
+        self._closed = False
         self._lock = RLock()
         self._generation = 0
         self._state = ApplicationState()
@@ -149,6 +157,7 @@ class Application:
             self._views.clear()
             if changed:
                 self._configuration += 1
+                self._clear_cache()
                 self._browser = replace(self._browser, entries=tuple(replace(e, status='pending', message='参数已更新，尚未分析') for e in self._browser.entries))
             if not changed and self._state.result is not None:
                 self._state = replace(self._state, displayed_frequency_range=bounds,
@@ -169,6 +178,7 @@ class Application:
         with self._lock:
             self._batch += 1
             self._views.clear()
+            self._clear_cache()
             self._browser = BrowserState(path.parent, (BrowserEntry(path, Path(path.name)),), 0)
             return self._request(path)
 
@@ -184,6 +194,7 @@ class Application:
             self._generation += 1
             batch = self._batch
             self._views.clear()
+            self._clear_cache()
             self._browser = BrowserState(path, message='正在扫描文件夹…')
             self._state = ApplicationState('scanning', path, message='正在扫描文件夹…')
         return self._executor.submit(self._scan_folder, path, batch)
@@ -247,6 +258,16 @@ class Application:
             generation = self._generation
             self._state = ApplicationState("computing", path, message="正在读取并计算时频图…")
             self._mark_entry(path, 'computing', self._state.message)
+            try:
+                cached = self._cached(self._cache_key(path, self._parameters))
+            except OSError:
+                cached = None
+            if cached is not None:
+                # A ready result never queues behind an in-flight speculative read.
+                future = Future()
+                future.set_result(self._analyse(path, generation, self._batch,
+                    self._parameters, self._display_range, self._configuration, cached))
+                return future
             return self._executor.submit(self._analyse, path, generation, self._batch,
                                          self._parameters, self._display_range, self._configuration)
 
@@ -255,9 +276,19 @@ class Application:
             replace(e, status=status, message=message) if e.path == path else e
             for e in self._browser.entries))
 
-    def _analyse(self, path, generation, batch, parameters, bounds, configuration):
+    def _analyse(self, path, generation, batch, parameters, bounds, configuration, result=None):
         try:
-            result = _compute(path, parameters)
+            if result is None:
+                key = self._cache_key(path, parameters)
+                with self._lock:
+                    result = self._cached(key)
+            if result is None:
+                result = _compute(path, parameters)
+                if key != self._cache_key(path, parameters):
+                    raise OSError("采集文件在计算期间发生变化，请重新打开")
+                with self._lock:
+                    if (generation, batch, configuration) == (self._generation, self._batch, self._configuration):
+                        self._remember(key, result)
             message = ('计算完成 · Chebyshev I 带通滤波' if parameters.filter_enabled else '计算完成 · 未滤波')
             if result.warnings:
                 message += ' · ' + '；'.join(result.warnings)
@@ -272,7 +303,69 @@ class Application:
                 if state.result is not None:
                     state = replace(state, viewport=self._views.get(path, state.viewport))
                 self._state = state
+                if not self._closed:
+                    self._prefetch_neighbors(generation, batch, parameters, configuration)
         return state
+
+    def _clear_cache(self):
+        self._cache.clear()
+        self._cache_bytes = 0
+
+    @staticmethod
+    def _cache_key(path, parameters):
+        stat = path.stat()
+        return (path, stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, parameters)
+
+    def _cached(self, key):
+        result = self._cache.get(key)
+        if result is not None:
+            self._cache.move_to_end(key)
+        return result
+
+    @staticmethod
+    def _result_bytes(result):
+        return sum(a.nbytes for a in (result.times, result.frequencies, result.psd, result.db))
+
+    def _remember(self, key, result):
+        size = self._result_bytes(result)
+        if size > self._cache_budget:
+            return
+        if key in self._cache:
+            self._cache_bytes -= self._result_bytes(self._cache.pop(key))
+        while self._cache and self._cache_bytes + size > self._cache_budget:
+            _, old = self._cache.popitem(last=False)
+            self._cache_bytes -= self._result_bytes(old)
+        self._cache[key] = result
+        self._cache_bytes += size
+
+    def _prefetch_neighbors(self, generation, batch, parameters, configuration):
+        index = self._browser.current_index
+        if index is None or self._cache_budget == 0:
+            return
+        for neighbor in (index + 1, index - 1):
+            if 0 <= neighbor < len(self._browser.entries):
+                path = self._browser.entries[neighbor].path
+                self._executor.submit(self._prefetch, path, generation, batch, parameters,
+                                      configuration, speculative=True)
+
+    def _prefetch(self, path, generation, batch, parameters, configuration):
+        with self._lock:
+            if self._closed or (generation, batch, configuration) != (self._generation, self._batch, self._configuration):
+                return
+        try:
+            key = self._cache_key(path, parameters)
+            with self._lock:
+                if self._cached(key) is not None:
+                    return
+            result = _compute(path, parameters)
+            if key != self._cache_key(path, parameters):
+                return
+            with self._lock:
+                if not self._closed and (generation, batch, configuration) == (self._generation, self._batch, self._configuration):
+                    self._remember(key, result)
+        except (OSError, ValueError):
+            # Speculative errors are reported only when this file is requested.
+            pass
 
     @property
     def export_status(self):
@@ -421,9 +514,13 @@ class Application:
             return self.set_viewport(replace(_full_view(self._state.result), frequency_range=self._display_range))
 
     def close(self):
+        with self._lock:
+            self._closed = True
         self.cancel_batch_export()
         self._executor.shutdown(wait=True, cancel_futures=True)
         self._export_executor.shutdown(wait=True, cancel_futures=True)
+        with self._lock:
+            self._clear_cache()
 
     def __enter__(self):
         return self
@@ -448,6 +545,8 @@ def _compute(path, parameters):
     counts = (records["samples"].reshape(-1) & 0xffffff).astype(np.int32)
     counts[counts >= 0x800000] -= 0x1000000
     volts = counts.astype(np.float64) * (8.196 / 2**24)
+    nonzero = bool(np.any(counts))
+    del counts, records, data
     if parameters.filter_enabled:
         low, high, width = parameters.passband_low, parameters.passband_high, parameters.transition_width
         sos = signal.iirdesign([low, high], [low-width, high+width], .5, 10,
@@ -460,12 +559,23 @@ def _compute(path, parameters):
         raise ValueError('采集文件采样点少于窗长，无法形成完整时频窗')
     window = np.hanning(n + 2)[1:-1]
     segments = np.lib.stride_tricks.sliding_window_view(volts, n)[::n-overlap]
-    spectrum = np.fft.rfft(segments * window, n=nfft, axis=1)
-    psd = (np.abs(spectrum)**2 / (fs * np.dot(window, window))).T
+    # Bound FFT workspace independently of the number of complete windows.
+    psd = np.empty((nfft // 2 + 1, segments.shape[0]), dtype=np.float64)
+    scale = fs * np.dot(window, window)
+    for start in range(0, segments.shape[0], 256):
+        spectrum = np.fft.rfft(segments[start:start+256] * window, n=nfft, axis=1)
+        power = np.abs(spectrum)
+        np.square(power, out=power)
+        power /= scale
+        psd[:, start:start+256] = power.T
+    del spectrum, power
     psd[1:-1 if nfft % 2 == 0 else None] *= 2
-    db = 10 * np.log10(psd + np.finfo(np.float64).eps)
+    db = psd.copy()
+    db += np.finfo(np.float64).eps
+    np.log10(db, out=db)
+    db *= 10
     floor = float(10 * np.log10(np.finfo(np.float64).eps))
-    levels = (floor, max(float(db.max()), floor + 1) if not np.any(counts) else float(db.max()))
+    levels = (floor, max(float(db.max()), floor + 1) if not nonzero else float(db.max()))
     times = (np.arange(segments.shape[0]) * (n-overlap) + n/2) / fs
     frequencies = np.fft.rfftfreq(nfft, 1/fs)
     for array in (times, frequencies, psd, db):

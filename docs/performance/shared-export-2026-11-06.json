@@ -1,0 +1,18 @@
+{
+  "seconds": 2.345596099999966,
+  "foreground_largest_with_new_parameters_seconds": 2.3417257000000973,
+  "heartbeat_count": 225,
+  "heartbeat_max_gap_ms": 51.14750000029744,
+  "peak_rss_bytes": 913797120,
+  "settled_rss_bytes": 505540608,
+  "exported_files": 3,
+  "export_status": "cancelled",
+  "snapshot_sample_rate": 96000,
+  "foreground_sample_rate": 48000,
+  "snapshot_frequency_range": [
+    0,
+    48000
+  ],
+  "remaining_uncompleted": 164,
+  "png_metadata_and_current_configuration_verified": true
+}
