@@ -110,7 +110,7 @@ def test_export_menu_modes_choose_directory_and_keep_plot(qtbot, tmp_path, monke
         return str(tmp_path)
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", choose)
     actions = window.export_button.menu().actions()
-    assert [action.text() for action in actions] == ["导出当前视图…", "导出全时段…"]
+    assert [action.text() for action in actions] == ["导出当前视图…", "导出全时段…", "批量导出全部文件…"]
     ticks = []
     heartbeat = QTimer(window)
     heartbeat.setInterval(1)
