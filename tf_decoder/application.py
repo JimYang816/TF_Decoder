@@ -266,7 +266,7 @@ class Application:
                 # A ready result never queues behind an in-flight speculative read.
                 future = Future()
                 future.set_result(self._analyse(path, generation, self._batch,
-                    self._parameters, self._display_range, self._configuration))
+                    self._parameters, self._display_range, self._configuration, cached))
                 return future
             return self._executor.submit(self._analyse, path, generation, self._batch,
                                          self._parameters, self._display_range, self._configuration)
@@ -276,11 +276,12 @@ class Application:
             replace(e, status=status, message=message) if e.path == path else e
             for e in self._browser.entries))
 
-    def _analyse(self, path, generation, batch, parameters, bounds, configuration):
+    def _analyse(self, path, generation, batch, parameters, bounds, configuration, result=None):
         try:
-            key = self._cache_key(path, parameters)
-            with self._lock:
-                result = self._cached(key)
+            if result is None:
+                key = self._cache_key(path, parameters)
+                with self._lock:
+                    result = self._cached(key)
             if result is None:
                 result = _compute(path, parameters)
                 if key != self._cache_key(path, parameters):

@@ -48,6 +48,8 @@ with Application() as application:
 - `displayed_frequency_range=(low, high)` 使用 Hz，须在 0 至 Nyquist 内有限递增，省略时为完整范围。它独立于滤波，写入 `state.displayed_frequency_range`；仅改变显示频段时保留同一 `AnalysisResult`、PSD 和全文件色阶，当前视口频率更新，恢复全图及全时段导出使用此频段。计算中的旧请求不能覆盖新配置。
 - 右侧参数栏可收起，常用滤波和显示频段直接可见；高级参数默认折叠。输入值只在点击“应用到整批”后生效，无效输入保留原图并在参数区提示；图上方标识已应用配置。计算期间可继续编辑、应用及切图。
 - `close()` 关闭后台执行器；支持上下文管理。Future 回调在工作线程运行，Qt 客户端通过 signal 收取，不能直接在回调修改控件。窗口关闭时等待正在计算的任务清理。
+- `Application(cache_budget_bytes=384 * 1024**2)` 设置分析结果缓存预算（非负整数字节，0 禁用缓存和预取）。缓存按 PSD、dB、时间与频率数组总字节计费，使用 LRU 淘汰；当前显示、计算工作区及导出快照独立占用内存，因此预算不是进程 RSS 上限。缓存键包含绝对文件路径、文件系统身份、大小、纳秒修改／变更时间和已应用计算参数；文件变化会重新读取，计算期间变化返回明确失败。视口单独保存在当前批次中，不占用矩阵缓存。
+- 当前文件优先分析，完成后低优先级预取前后相邻文件，不遍历计算整批。等待中的前台请求按最新优先调度，正在执行的任务不强制中断；缓存命中返回已完成 Future，即使后台正在预取。旧请求仍有自己的结果快照，但不能替换当前图或污染新批次／新配置缓存。批量导出逐个计算并及时释放，不向浏览缓存写入整批矩阵。
 - `export_png(directory, *, mode="current" | "full") -> Future[ExportResult]` 立即提交后台 PNG 导出，捕获调用时已应用的分析结果及范围；之后切换文件或改变视口不改变该任务。`export_status` 为最新任务状态（`idle`、`exporting`、`succeeded`、`failed`）；`ExportResult(status, path, viewport, message)` 含成功输出的绝对路径或明确失败原因。尚未就绪、无效模式或不可写目录返回失败结果。每次使用独占文件创建保护重名，失败清理未完成图片。导出独立于浏览状态，不改写 `state`。PNG 使用 `QImage/QPainter` 在后台渲染，不访问窗口控件；调用方须在主线程保持 `QGuiApplication`（桌面窗口已具备），缺少时返回明确失败。
 - `ApplicationState.displayed_frequency_range` 保存与缩放视口独立的已应用显示频段（Hz，当前默认为 0–Nyquist），供全时段导出使用；后续显示频段设置沿用此字段。PNG 附带来源、范围、PSD 单位、色阶及已应用参数文本元数据，方便复核。
 - `export_batch_png(directory, *, progress=None) -> Future[BatchExportState]` 捕获启动时的文件列表、已应用参数及显示频段，后台逐个分析并导出全时段 PNG。自动创建输出相对目录，沿用单图渲染、元数据及 `_1` 等重名保护；失败后继续，不保留整批时频矩阵。浏览、导入新批次或应用新参数不改变已启动任务。已有批量任务时再次启动会抛出 `ValueError`；无文件返回失败快照。
