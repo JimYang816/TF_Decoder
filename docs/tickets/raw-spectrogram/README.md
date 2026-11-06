@@ -2,6 +2,12 @@
 
 来源：[规格 #1](https://github.com/JimYang816/TF_Decoder/issues/1)。状态：用户已确认 8 项拆分，全部发布并回读核对，均标记 ready-for-agent。
 
+## 实现状态（2026-11-06）
+
+- #2–#8：已实现、合入 `codex/raw-spectrogram-app`，测试证据已评论，各任务已关闭。
+- #9：实现与离线 Windows ZIP 已交付，固定基准审查修复后 47 项测试通过；任务保留打开，待完整打包原生流程及干净 Windows 验收。用户确认无干净环境，要求明确列为待验收。
+- [交付包与校验](../../portable-delivery.md)、[固定基准审查](../../reviews/fixed-baseline-review.md)、[数值核对](../../numerical-parity.md)、[性能记录](../../performance/browser-2026-11-06.md)。
+
 当前仓库没有应用代码，无需前置重构。每项任务交付一个可操作、可验证的完整使用场景；界面、应用编排和行为测试随功能一起完成，主要复用规格中已确认的同一个应用级测试入口。
 
 ## 已发布的任务

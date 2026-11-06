@@ -34,13 +34,13 @@ PyInstaller 从解释器的基础安装复制必要 DLL；构建日志中的 Ana
 ## 验证记录与边界
 
 2026-11-06 开发机为 Windows 11 x64（10.0.26200）、Python 3.13.9，依赖详见锁定文件。
-已有应用级与 Qt 冒烟回归 42 项全部通过（`QT_QPA_PLATFORM=offscreen`，3.56 秒）。
+固定基准审查修复后的应用级与 Qt 冒烟回归 47 项全部通过（`QT_QPA_PLATFORM=offscreen`，集成验证 3.77 秒）。
 源程序的真实 RAW、性能、PNG 与 125%／150% 显示缩放记录参见
 [实现日志](implementation-run.md)、[数值一致性](numerical-parity.md) 和 README。
 本切片不改动界面或信号计算；没有添加仅检验构建脚本文本的测试。
 
 最终交付包从独立的官方 CPython 3.13.9 环境构建，源码提交为
-`b35d240d2e9cf5e19320aa4d916b64898fe432c6`，`source_dirty=false`。
+`8a03044aebbb1839c458e9f1ae88f547c9278ee6`，`source_dirty=false`。该包包含固定基准审查的全部代码修复。
 构建的 DLL 搜索 PATH 只含构建解释器和 Windows 系统目录；构建依赖清单中没有
 Anaconda 或 Codex/Poppler 路径。OpenSSL 3.0.18 DLL 来自官方 Python 分发包，
 附带完整 Apache-2.0 许可。PyInstaller 对未使用的可选 OpenGL 和已不存在的
@@ -49,8 +49,8 @@ SciPy `_cdflib` hook 给出警告；实际 GUI 启动正常。
 | 交付证据 | 结果 |
 | --- | --- |
 | ZIP | `dist/TF-Decoder-0.1.0-windows-x64.zip` |
-| 字节数 | 93,066,641 |
-| SHA256 | `8e20bea72ccb5a55cb05d8dbd17482493f0668a64e2acbbc2bd488d7c5372c99` |
+| 字节数 | 93,068,841 |
+| SHA256 | `05f12b7589794bf83541d30ffe91a1e78f77bcd34326406f986449578d1f6073` |
 | 解压检查 | 中文路径下实际解压 ZIP，488 个文件的 SHA256 全部匹配，包含 parula 数据 |
 | 隔离启动 | PATH 仅 `C:\Windows\System32`，清除 Python/Conda/Qt 环境变量，独立 TEMP；实际 EXE 持续运行 5 秒后由验收脚本终止 |
 | 图形平台 | 此次隔离启动使用 Qt offscreen。源程序 GUI 冒烟已通过；实际打包 EXE 的原生完整交互流程尚未完成，computer-use 应用授权等待超时，不能报告为通过 |
