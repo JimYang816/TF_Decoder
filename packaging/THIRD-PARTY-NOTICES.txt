@@ -1,6 +1,7 @@
 TF Decoder 0.1.0 — third-party components
 
 Python 3.13.9: Python Software Foundation license; see licenses/Python.
+OpenSSL 3.0.18 (Python's DLLs): Apache-2.0, see licenses/OpenSSL.
 NumPy: BSD-3-Clause and bundled runtime notices, see licenses/numpy.
 SciPy: BSD-3-Clause and bundled OpenBLAS/runtime notices, see licenses/scipy.
 PyQtGraph: MIT, see licenses/pyqtgraph.
