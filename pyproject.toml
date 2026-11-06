@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tf-decoder"
+version = "0.1.0"
+description = "Offline RAW spectrogram desktop viewer"
+requires-python = ">=3.11"
+dependencies = ["numpy>=2.0,<3", "scipy>=1.14,<2", "PySide6==6.9.2", "pyqtgraph>=0.13.7,<0.15"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
+[project.scripts]
+tf-decoder = "tf_decoder.gui:main"
+
+[tool.setuptools.package-data]
+tf_decoder = ["parula256.csv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
