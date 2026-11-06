@@ -152,16 +152,21 @@ class Application:
             raise ValueError('显示频率范围必须在 0 Hz 至 Nyquist 频率之间且下限小于上限')
         with self._lock:
             changed = parameters != self._parameters
+            display_changed = bounds != self._display_range
             self._parameters = parameters
             self._display_range = bounds
-            self._views.clear()
             if changed:
+                self._views.clear()
                 self._configuration += 1
                 self._clear_cache()
                 self._browser = replace(self._browser, entries=tuple(replace(e, status='pending', message='参数已更新，尚未分析') for e in self._browser.entries))
+            elif display_changed:
+                self._views = {path: _clip_frequency(view, bounds) for path, view in self._views.items()}
             if not changed and self._state.result is not None:
-                self._state = replace(self._state, displayed_frequency_range=bounds,
-                    viewport=Viewport(self._state.viewport.time_range, bounds))
+                if display_changed:
+                    view = _clip_frequency(self._state.viewport, bounds)
+                    self._views[self._state.path] = view
+                    self._state = replace(self._state, displayed_frequency_range=bounds, viewport=view)
             elif self._browser.current_index is not None:
                 return self._request(self._browser.entries[self._browser.current_index].path)
             future = Future()
@@ -301,7 +306,8 @@ class Application:
                                  ('warning' if result.warnings else 'success'), state.message)
             if generation == self._generation:
                 if state.result is not None:
-                    state = replace(state, viewport=self._views.get(path, state.viewport))
+                    view = self._views.get(path, replace(state.viewport, frequency_range=self._display_range))
+                    state = replace(state, viewport=view, displayed_frequency_range=self._display_range)
                 self._state = state
                 if not self._closed:
                     self._prefetch_neighbors(generation, batch, parameters, configuration)
@@ -387,8 +393,14 @@ class Application:
                 _full_view(state.result).time_range,
                 state.displayed_frequency_range or _full_view(state.result).frequency_range)
             self._export_status = ExportResult("exporting", viewport=view, message="正在导出 PNG…")
+            relative_parent = self._browser.entries[self._browser.current_index].relative_path.parent
+            destination = Path(directory).resolve() / relative_parent
         def work():
-            exported = write_png(state.result, view, Path(directory), mode)
+            try:
+                destination.mkdir(parents=True, exist_ok=True)
+                exported = write_png(state.result, view, destination, mode)
+            except OSError as error:
+                exported = ExportResult('failed', message=f'{destination}: {error}')
             with self._lock:
                 self._export_status = exported
             return exported
@@ -532,6 +544,12 @@ class Application:
 def _full_view(result):
     return Viewport((0, result.sample_count/result.parameters.sample_rate),
                     (0, result.parameters.sample_rate/2))
+
+
+def _clip_frequency(view, bounds):
+    low = max(view.frequency_range[0], bounds[0])
+    high = min(view.frequency_range[1], bounds[1])
+    return replace(view, frequency_range=(low, high) if low < high else bounds)
 
 
 def _compute(path, parameters):

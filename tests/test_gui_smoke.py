@@ -7,6 +7,42 @@ from tf_decoder.gui import MainWindow
 from test_application import raw_file
 
 
+def test_current_export_finishing_on_failed_file_keeps_batch_available(qtbot, tmp_path, monkeypatch):
+    from pathlib import Path
+    from threading import Event
+    raw_file(tmp_path, [0], '1.raw')
+    (tmp_path / '2.raw').write_bytes(b'')
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    window.open_folder(tmp_path)
+    qtbot.waitUntil(lambda: window.current_result is not None)
+    entered, release = Event(), Event()
+    original_open = Path.open
+    def gated_open(path, *args, **kwargs):
+        if path.suffix == '.png':
+            entered.set()
+            assert release.wait(10)
+        return original_open(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'open', gated_open)
+    monkeypatch.setattr(QFileDialog, 'getExistingDirectory', lambda *args: str(tmp_path / 'output'))
+    window.export_button.menu().actions()[0].trigger()
+    try:
+        qtbot.waitUntil(entered.is_set)
+        window.next_button.click()
+        qtbot.waitUntil(lambda: window.application.state.status == 'failed')
+    finally:
+        release.set()
+    qtbot.waitUntil(lambda: 'PNG 已导出' in window.status_label.text())
+    assert window.export_button.isEnabled()
+    actions = window.export_button.menu().actions()
+    assert not actions[0].isEnabled() and not actions[1].isEnabled()
+    assert actions[2].isEnabled()
+    actions[2].trigger()
+    qtbot.waitUntil(lambda: '失败 1' in window.batch_status_label.text())
+    window.close()
+
+
 def test_open_dialog_button_reaches_plot_without_blocking_qt(tmp_path, monkeypatch):
     qt = QApplication.instance() or QApplication([])
     path = raw_file(tmp_path, [2097152])
