@@ -4,7 +4,7 @@ import math
 import os
 import re
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock
 from collections import OrderedDict
 from .scheduling import AnalysisExecutor
 import numpy as np
@@ -82,6 +82,33 @@ class BrowserState:
                 for status in ('pending', 'computing', 'success', 'warning', 'failed')}
 
 
+@dataclass(frozen=True)
+class BatchExportEntry:
+    path: Path
+    relative_path: Path
+    status: str = 'pending'
+    output: Path | None = None
+    message: str = '尚未导出'
+
+
+@dataclass(frozen=True)
+class BatchExportState:
+    status: str = 'idle'
+    entries: tuple[BatchExportEntry, ...] = ()
+    parameters: AnalysisParameters | None = None
+    displayed_frequency_range: tuple[float, float] | None = None
+    message: str = '尚未批量导出'
+
+    @property
+    def completed(self):
+        return sum(e.status in ('success', 'warning', 'failed') for e in self.entries)
+
+    @property
+    def summary(self):
+        return {status: sum(e.status == status for e in self.entries)
+                for status in ('success', 'warning', 'failed', 'uncompleted')}
+
+
 class Application:
     """Asynchronous, Qt-independent entry point. Future results are state snapshots.
 
@@ -108,6 +135,8 @@ class Application:
         self._parameters = AnalysisParameters()
         self._display_range = (0, 48000)
         self._configuration = 0
+        self._batch_export_status = BatchExportState()
+        self._batch_cancel = Event()
 
     @property
     def applied_parameters(self):
@@ -364,6 +393,87 @@ class Application:
             return exported
         return self._export_executor.submit(work)
 
+    @property
+    def batch_export_status(self):
+        with self._lock:
+            return self._batch_export_status
+
+    def cancel_batch_export(self):
+        """Stop at the next safe boundary; a PNG already writing completes intact."""
+        with self._lock:
+            self._batch_cancel.set()
+
+    def export_batch_png(self, directory: str | Path, *, progress=None) -> Future:
+        """Sequential full-time PNG export of the current entries/configuration snapshot.
+
+        ``progress(snapshot)`` runs on the export worker, before advancing to the
+        next file, so observers can deterministically cancel at file boundaries.
+        Marshal widget changes to the Qt thread. Callback errors are ignored.
+        """
+        from .export import write_png
+        with self._lock:
+            if self._batch_export_status.status == 'exporting':
+                raise ValueError('批量导出正在进行')
+            entries = tuple(BatchExportEntry(e.path, e.relative_path) for e in self._browser.entries)
+            snapshot = BatchExportState('exporting', entries, self._parameters, self._display_range,
+                                        '正在批量导出 PNG…')
+            self._batch_export_status = snapshot
+            cancel = self._batch_cancel = Event()
+        directory = Path(directory).resolve()
+
+        def publish(state):
+            with self._lock:
+                self._batch_export_status = state
+            if progress is not None:
+                try:
+                    progress(state)
+                except Exception:
+                    # An observer must not interrupt output or leave the job active.
+                    pass
+
+        def work():
+            state = snapshot
+            publish(state)
+            for index, entry in enumerate(snapshot.entries):
+                if cancel.is_set():
+                    break
+                items = list(state.entries)
+                items[index] = replace(entry, status='processing', message='正在分析并导出…')
+                state = replace(state, entries=tuple(items))
+                publish(state)
+                if cancel.is_set():
+                    break
+                destination = directory / entry.relative_path.parent
+                result = None
+                try:
+                    result = _compute(entry.path, snapshot.parameters)
+                    if cancel.is_set():
+                        break
+                    destination.mkdir(parents=True, exist_ok=True)
+                    view = replace(_full_view(result), frequency_range=snapshot.displayed_frequency_range)
+                    exported = write_png(result, view, destination, 'full')
+                    if exported.status == 'failed':
+                        raise OSError(exported.message)
+                    items[index] = replace(entry, status='warning' if result.warnings else 'success',
+                        output=exported.path, message='；'.join(result.warnings) or exported.message)
+                except Exception as error:
+                    items[index] = replace(entry, status='failed', message=f'{entry.path} → {destination}: {error}')
+                finally:
+                    result = None  # Release this matrix before starting the next file.
+                state = replace(state, entries=tuple(items))
+                publish(state)
+            cancelled = cancel.is_set() and state.completed < len(state.entries)
+            entries = tuple(replace(e, status='uncompleted', message='已取消，未完成')
+                            if e.status in ('pending', 'processing') else e for e in state.entries)
+            state = replace(state, status='cancelled' if cancelled else ('completed' if entries else 'failed'), entries=entries)
+            counts = state.summary
+            message = ('批量导出已取消' if cancelled else '批量导出完成') + (
+                f" · 成功 {counts['success']} · 警告 {counts['warning']} · 失败 {counts['failed']} · 未完成 {counts['uncompleted']}")
+            state = replace(state, message=message if entries else '没有可导出的采集文件')
+            publish(state)
+            return state
+        return self._export_executor.submit(work)
+
     def set_viewport(self, viewport: Viewport) -> ApplicationState:
         """Select a rectangle without recomputing PSD or file-wide color levels."""
         if not isinstance(viewport, Viewport):
@@ -405,6 +515,7 @@ class Application:
     def close(self):
         with self._lock:
             self._closed = True
+        self.cancel_batch_export()
         self._executor.shutdown(wait=True, cancel_futures=True)
         self._export_executor.shutdown(wait=True, cancel_futures=True)
         with self._lock:

@@ -50,6 +50,9 @@ with Application() as application:
 - `close()` 关闭后台执行器；支持上下文管理。Future 回调在工作线程运行，Qt 客户端通过 signal 收取，不能直接在回调修改控件。窗口关闭时等待正在计算的任务清理。
 - `export_png(directory, *, mode="current" | "full") -> Future[ExportResult]` 立即提交后台 PNG 导出，捕获调用时已应用的分析结果及范围；之后切换文件或改变视口不改变该任务。`export_status` 为最新任务状态（`idle`、`exporting`、`succeeded`、`failed`）；`ExportResult(status, path, viewport, message)` 含成功输出的绝对路径或明确失败原因。尚未就绪、无效模式或不可写目录返回失败结果。每次使用独占文件创建保护重名，失败清理未完成图片。导出独立于浏览状态，不改写 `state`。PNG 使用 `QImage/QPainter` 在后台渲染，不访问窗口控件；调用方须在主线程保持 `QGuiApplication`（桌面窗口已具备），缺少时返回明确失败。
 - `ApplicationState.displayed_frequency_range` 保存与缩放视口独立的已应用显示频段（Hz，当前默认为 0–Nyquist），供全时段导出使用；后续显示频段设置沿用此字段。PNG 附带来源、范围、PSD 单位、色阶及已应用参数文本元数据，方便复核。
+- `export_batch_png(directory, *, progress=None) -> Future[BatchExportState]` 捕获启动时的文件列表、已应用参数及显示频段，后台逐个分析并导出全时段 PNG。自动创建输出相对目录，沿用单图渲染、元数据及 `_1` 等重名保护；失败后继续，不保留整批时频矩阵。浏览、导入新批次或应用新参数不改变已启动任务。已有批量任务时再次启动会抛出 `ValueError`；无文件返回失败快照。
+- `batch_export_status` 是不可变任务快照，状态为 `idle / exporting / completed / cancelled / failed`。快照包含 `parameters`、`displayed_frequency_range`、`entries`、已处理数 `completed`、`summary` 和中文 `message`；每项 `BatchExportEntry(path, relative_path, status, output, message)` 标明来源、相对路径、成功输出或原因。条目状态为 `pending / processing / success / warning / failed / uncompleted`，`summary` 分别统计成功、警告、失败、未完成；警告表示图片已成功输出但来源有残缺尾块。
+- `cancel_batch_export()` 在安全边界取消；已开始写入的图片完整写完，已完成图片保留，后续项和分析中未写入的项标为 `uncompleted`。可选 `progress(snapshot)` 在工作线程发布每个文件的开始／完成及最终状态，下一项开始前调用完毕，可在回调中确定地取消；回调应尽快返回，异常不会中断导出，Qt 客户端应通过 signal 更新控件。窗口底部提供批量文件进度、取消及可展开的逐文件明细，不弹出逐个错误窗口。
 - `tf_decoder.gui.MainWindow(application=None)` 可注入同一应用实例；`open_file(path)` 和 `open_folder(path)` 是界面的导入路径，`current_result` 是当前已显示的结果；图形适配器为 `plot`、`image`、`color_bar`，供后续交互与导出扩展。
 
 ## 数值与颜色来源
