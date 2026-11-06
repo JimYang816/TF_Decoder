@@ -1,0 +1,4 @@
+OpenSSL 3.0.18, bundled with the official CPython 3.13.9 Windows x64 distribution.
+Copyright 1998-2025 The OpenSSL Authors. All rights reserved.
+Distributed under Apache License 2.0; see LICENSE.txt.
+Upstream source: https://github.com/openssl/openssl/tree/openssl-3.0.18

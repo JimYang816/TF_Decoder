@@ -1,0 +1,18 @@
+# Windows x64 / CPython 3.13.9 release toolchain. Install into a dedicated venv.
+numpy==2.5.4
+scipy==1.18.1
+PySide6==6.9.2
+PySide6_Addons==6.9.2
+PySide6_Essentials==6.9.2
+shiboken6==6.9.2
+pyqtgraph==0.14.0
+colorama==0.4.6
+typing_extensions==4.16.0
+psutil==7.2.2
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.9
+altgraph==0.17.5
+packaging==26.3
+pefile==2024.8.26
+pywin32-ctypes==0.2.3
+setuptools==84.2.1

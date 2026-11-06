@@ -2,6 +2,10 @@
 
 中文离线 RAW 时频图桌面应用。支持打开单个 RAW 文件或递归导入文件夹，统一应用计算与滤波参数，按需计算时频图并交互查看局部。
 
+Windows 便携版：解压完整 ZIP 后双击 `TF-Decoder/TF-Decoder.exe`，保留 `_internal`
+目录。运行不需要 Python、MATLAB、MATLAB Runtime 或网络。中文说明、版本来源和第三方
+许可随包附带；[构建方式与交付验收记录](docs/portable-delivery.md) 说明当前验证范围。
+
 开发启动（Python 3.11+）：
 
 ```powershell
