@@ -1,5 +1,7 @@
 # TF Decoder
 
+**[下载最新版（Windows x64）](https://github.com/JimYang816/TF_Decoder/releases/latest)** · 在发布页的 **Assets** 中下载 `.exe`，双击即可运行。
+
 中文 Windows 桌面工具。每次查看一个 RAW 的时频图，以10个文件为一批在后台预计算，支持左右切换、频段调整、可选带通滤波和 PNG 导出。
 
 ## 双击 EXE 使用
