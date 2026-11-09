@@ -13,7 +13,7 @@ from pathlib import Path
 from PySide6.QtCore import QSettings, QThread, Signal, Qt, QTimer
 from PySide6.QtGui import QFont, QFontDatabase, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFrame, QHBoxLayout,
+    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
     QLabel, QLineEdit, QListView, QMainWindow, QMessageBox, QProgressBar, QPushButton,
     QSizePolicy, QVBoxLayout, QWidget,
 )
@@ -331,13 +331,18 @@ class MainWindow(QMainWindow):
         source.addWidget(scan)
         layout.addWidget(self.source_panel)
 
+        self.settings_row = QWidget()
+        settings_row = QHBoxLayout(self.settings_row)
+        settings_row.setContentsMargins(0, 0, 0, 0)
+        settings_row.setSpacing(8)
+
         self.settings_panel = QWidget()
         self.settings_panel.setObjectName("panel")
         settings = QVBoxLayout(self.settings_panel)
-        settings.setContentsMargins(12, 8, 12, 8)
+        settings.setContentsMargins(8, 8, 8, 8)
         settings.setSpacing(4)
         fields = QHBoxLayout()
-        fields.setSpacing(8)
+        fields.setSpacing(6)
         display_title = QLabel("显示频率")
         display_title.setObjectName("section")
         fields.addWidget(display_title)
@@ -356,7 +361,7 @@ class MainWindow(QMainWindow):
 
         add_field("下限", self.display_low, "显示频率下限（kHz）")
         add_field("上限", self.display_high, "显示频率上限（kHz）")
-        fields.addSpacing(8)
+        fields.addSpacing(4)
         self.filter_check = QCheckBox("带通滤波")
         self.filter_check.setToolTip("勾选并应用后重新计算当前批；关闭则显示原始信号")
         self.filter_check.toggled.connect(self.filter_low.setEnabled)
@@ -366,7 +371,6 @@ class MainWindow(QMainWindow):
         fields.addWidget(self.filter_check)
         add_field("下限", self.filter_low, "带通滤波下限（kHz）")
         add_field("上限", self.filter_high, "带通滤波上限（kHz）")
-        fields.addStretch(1)
         self.apply_button = QPushButton("应用设置")
         self.apply_button.setToolTip("应用显示频率和滤波参数（Ctrl+Return）")
         self.apply_button.clicked.connect(self.apply_settings)
@@ -382,7 +386,41 @@ class MainWindow(QMainWindow):
         self.pending_label.setObjectName("secondary")
         detail.addWidget(self.pending_label)
         settings.addLayout(detail)
-        layout.addWidget(self.settings_panel)
+        settings_row.addWidget(self.settings_panel)
+
+        self.file_search_panel = QWidget()
+        search = QGridLayout(self.file_search_panel)
+        search.setContentsMargins(0, 0, 0, 0)
+        search.setHorizontalSpacing(6)
+        search.setVerticalSpacing(4)
+        search_label = QLabel("文件名")
+        search_label.setObjectName("secondary")
+        self.file_search_edit = QLineEdit()
+        self.file_search_edit.setMinimumWidth(96)
+        self.file_search_edit.setPlaceholderText("部分文件名")
+        self.file_search_edit.setAccessibleName("文件名搜索")
+        self.file_search_edit.setToolTip("输入完整或部分文件名，按回车跳转")
+        search_label.setBuddy(self.file_search_edit)
+        self.file_search_button = QPushButton("跳转")
+        self.file_search_button.setToolTip("跳到列表中第一个匹配的文件")
+        self.file_search_feedback = QLabel("未找到匹配文件")
+        self.file_search_feedback.setObjectName("secondary")
+        self.file_search_feedback.hide()
+        self.file_search_edit.textChanged.connect(self.file_search_feedback.hide)
+        self.file_search_edit.returnPressed.connect(self.jump_to_file)
+        self.file_search_button.clicked.connect(self.jump_to_file)
+        search.addWidget(search_label, 0, 0)
+        search.addWidget(self.file_search_edit, 0, 1)
+        search.addWidget(self.file_search_button, 0, 2)
+        search.addWidget(self.file_search_feedback, 1, 1, 1, 2)
+        search.setColumnStretch(1, 1)
+        search_box = QWidget()
+        search_box.setObjectName("panel")
+        self.settings_search = QHBoxLayout(search_box)
+        self.settings_search.setContentsMargins(8, 8, 8, 8)
+        self.settings_search.addWidget(self.file_search_panel, 0, Qt.AlignmentFlag.AlignTop)
+        settings_row.addWidget(search_box, 1)
+        layout.addWidget(self.settings_row)
 
         plot_panel = QWidget()
         plot_panel.setObjectName("panel")
@@ -397,11 +435,13 @@ class MainWindow(QMainWindow):
         plot_title.setObjectName("section")
         heading.addWidget(plot_title)
         self.file_label = ElidedLabel("尚未加载文件")
-        self.file_label.setObjectName("secondary")
+        self.file_label.setObjectName("fileName")
         heading.addWidget(self.file_label, 1)
+        self.heading_search = QHBoxLayout()
+        heading.addLayout(self.heading_search)
         self.spectrum_info = QLabel("功率谱密度 · dB/Hz")
         self.spectrum_info.setObjectName("badge")
-        heading.addWidget(self.spectrum_info)
+        heading.addWidget(self.spectrum_info, 0, Qt.AlignmentFlag.AlignVCenter)
         self.settings_button = QPushButton("分析参数")
         self.settings_button.setCheckable(True)
         self.settings_button.setChecked(True)
@@ -432,6 +472,17 @@ class MainWindow(QMainWindow):
         plot.addWidget(divider)
         actions = QHBoxLayout()
         actions.setSpacing(6)
+        self.save_current_button = QPushButton("保存当前图…")
+        self.save_current_button.setObjectName("primary")
+        self.save_current_button.setToolTip("保存当前频段及缩放视图为 PNG")
+        self.save_current_button.clicked.connect(self.save_current)
+        self.save_batch_button = QPushButton("保存本批…")
+        self.save_batch_button.setToolTip("本批准备完成后，导出最多 10 个文件的完整时频图")
+        self.save_batch_button.clicked.connect(self.save_batch)
+        actions.addWidget(self.save_current_button)
+        actions.addWidget(self.save_batch_button)
+        actions.addStretch(1)
+
         self.previous_button = QPushButton("上一文件")
         self.next_button = QPushButton("下一文件")
         self.previous_button.setToolTip("上一文件（←）；输入参数时方向键用于编辑")
@@ -443,7 +494,7 @@ class MainWindow(QMainWindow):
         actions.addWidget(self.previous_button)
         actions.addWidget(self.position_label)
         actions.addWidget(self.next_button)
-        actions.addSpacing(10)
+        actions.addSpacing(8)
         self.zoom_in_button = QPushButton("放大")
         self.zoom_out_button = QPushButton("缩小")
         self.reset_view_button = QPushButton("恢复全图")
@@ -469,20 +520,11 @@ class MainWindow(QMainWindow):
         time_label.setBuddy(self.time_format)
         self.time_format.currentIndexChanged.connect(self._update_time_format)
         actions.addWidget(self.time_format)
-        actions.addStretch()
-        self.save_current_button = QPushButton("保存当前图…")
-        self.save_current_button.setObjectName("primary")
-        self.save_current_button.setToolTip("保存当前频段及缩放视图为 PNG")
-        self.save_current_button.clicked.connect(self.save_current)
-        self.save_batch_button = QPushButton("保存本批…")
-        self.save_batch_button.setToolTip("本批准备完成后，导出最多 10 个文件的完整时频图")
-        self.save_batch_button.clicked.connect(self.save_batch)
-        actions.addWidget(self.save_current_button)
-        actions.addWidget(self.save_batch_button)
         plot.addLayout(actions)
         gestures = QLabel("左键框选放大 · 中键平移 · 双击恢复 · 滚轮缩放  |  Shift + 滚轮：时间  /  Ctrl + 滚轮：频率")
         gestures.setObjectName("secondary")
         gestures.setWordWrap(True)
+        gestures.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         plot.addWidget(gestures)
 
         self.progress = QProgressBar()
@@ -499,8 +541,8 @@ class MainWindow(QMainWindow):
 
         self.previous_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Left), self)
         self.next_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Right), self)
-        self.previous_shortcut.activated.connect(lambda: self.set_index(self.index - 1))
-        self.next_shortcut.activated.connect(lambda: self.set_index(self.index + 1))
+        self.previous_shortcut.activated.connect(self.previous_button.click)
+        self.next_shortcut.activated.connect(self.next_button.click)
         QApplication.instance().focusChanged.connect(self._update_navigation_shortcuts)
         self.shortcuts = []
         for sequence, callback in (
@@ -530,11 +572,19 @@ class MainWindow(QMainWindow):
         return spin
 
     def _toggle_settings(self, checked):
-        self.settings_panel.setVisible(checked and not self.focus_button.isChecked())
+        expanded = checked and not self.focus_button.isChecked()
+        source, target = self.heading_search, self.settings_search
+        if not expanded:
+            source, target = target, source
+        if target.indexOf(self.file_search_panel) < 0:
+            source.removeWidget(self.file_search_panel)
+            target.addWidget(self.file_search_panel, 0, Qt.AlignmentFlag.AlignTop)
+        self.settings_row.setVisible(expanded)
+        self.file_search_panel.show()
 
     def _toggle_focus(self, focused):
         self.source_panel.setVisible(not focused)
-        self.settings_panel.setVisible(not focused and self.settings_button.isChecked())
+        self._toggle_settings(self.settings_button.isChecked())
         self.settings_button.setEnabled(not focused)
         self.focus_button.setText("退出专注" if focused else "专注视图")
         self.focus_button.setFocus()
@@ -545,10 +595,14 @@ class MainWindow(QMainWindow):
         self.previous_shortcut.setEnabled(not editing)
         self.next_shortcut.setEnabled(not editing)
 
-    def _update_pending_settings(self):
+    def _read_analysis_fields(self):
         band = (self.display_low.value() * 1000, self.display_high.value() * 1000)
-        requested = AnalysisSettings(self.filter_check.isChecked(),
-                                     self.filter_low.value() * 1000, self.filter_high.value() * 1000)
+        settings = AnalysisSettings(self.filter_check.isChecked(),
+                                    self.filter_low.value() * 1000, self.filter_high.value() * 1000)
+        return band, settings
+
+    def _update_pending_settings(self):
+        band, requested = self._read_analysis_fields()
         pending = band != self.band or requested != self.settings
         self.pending_label.setText("参数已修改 · 应用后生效" if pending else "参数已应用")
         self.pending_label.setObjectName("pending" if pending else "secondary")
@@ -606,6 +660,7 @@ class MainWindow(QMainWindow):
         self.preferences.setValue("lastDirectory", str(self.directory))
         self.source_edit.setText(str(source))
         self.files = files
+        self.file_search_edit.clear()
         self.index = -1
         if files:
             self.set_index(0)
@@ -615,6 +670,21 @@ class MainWindow(QMainWindow):
             self.spectrum_info.setText("功率谱密度 · dB/Hz")
             self._show_message("所选文件夹及其子文件夹中未找到 RAW 文件。")
             self._update_controls()
+
+    def jump_to_file(self):
+        query = self.file_search_edit.text().strip().casefold()
+        if not query:
+            return
+        match = next((index for index, path in enumerate(self.files)
+                      if query in path.name.casefold()), None)
+        if match is None:
+            self.file_search_feedback.show()
+            self.file_search_edit.setFocus()
+            return
+        self.file_search_feedback.hide()
+        if match != self.index:
+            self.set_index(match)
+        self.canvas.setFocus()
 
     def set_index(self, index):
         if not 0 <= index < len(self.files):
@@ -640,16 +710,17 @@ class MainWindow(QMainWindow):
 
     def _show_current(self):
         path = self.files[self.index]
+        spectrum = self.cache.get(self.index)
         self.file_label.setText(path.name)
         self.file_label.setToolTip(str(path))
         mode = (f"带通 {self.settings.low_hz / 1000:g}–{self.settings.high_hz / 1000:g} kHz"
                 if self.settings.filter_enabled else "原始信号")
-        duration = f"{self.cache[self.index].duration:.3f} s · " if self.index in self.cache else ""
+        duration = f"{spectrum.duration:.3f} s · " if spectrum is not None else ""
         self.spectrum_info.setText(f"{duration}{mode} · {self.band[0] / 1000:g}–{self.band[1] / 1000:g} kHz")
-        if self.index in self.cache:
+        if spectrum is not None:
             with PLOT_LOCK:
                 try:
-                    self.axes = draw_spectrum(self.figure, self.cache[self.index], self.band,
+                    self.axes = draw_spectrum(self.figure, spectrum, self.band,
                                               minutes=self.time_format.currentData(), compact=True)
                 except OSError as error:
                     del self.cache[self.index]
@@ -705,8 +776,11 @@ class MainWindow(QMainWindow):
     def _update_controls(self):
         total = len(self.files)
         have = total > 0 and self.index >= 0
+        current_ready = self.index in self.cache
         self.previous_button.setEnabled(have and self.index > 0)
         self.next_button.setEnabled(have and self.index + 1 < total)
+        self.file_search_edit.setEnabled(have)
+        self.file_search_button.setEnabled(have)
         batch_count = len(self.batch_indices)
         total_batches = (total + BATCH_SIZE - 1) // BATCH_SIZE
         done = len(self.cache) + len(self.errors)
@@ -719,12 +793,12 @@ class MainWindow(QMainWindow):
             f"第 {self.index // BATCH_SIZE + 1} / {total_batches} 批 · 每批最多 {BATCH_SIZE} 个文件"
             if have else "尚未加载文件")
         self.progress.setVisible(have)
-        self.time_format.setEnabled(self.index in self.cache)
+        self.time_format.setEnabled(current_ready)
         exporting = self.export_worker is not None and self.export_worker.isRunning()
-        self.save_current_button.setEnabled(self.index in self.cache and not exporting)
+        self.save_current_button.setEnabled(current_ready and not exporting)
         self.save_batch_button.setEnabled(have and done == batch_count and not exporting)
         for button in (self.zoom_in_button, self.zoom_out_button, self.reset_view_button):
-            button.setEnabled(self.index in self.cache)
+            button.setEnabled(current_ready)
         if not exporting:
             if have:
                 state = "本批准备完成" if done == batch_count else "正在后台计算"
@@ -736,9 +810,7 @@ class MainWindow(QMainWindow):
     def apply_settings(self):
         for control in (self.display_low, self.display_high, self.filter_low, self.filter_high):
             control.interpretText()
-        band = (self.display_low.value() * 1000, self.display_high.value() * 1000)
-        settings = AnalysisSettings(self.filter_check.isChecked(),
-                                    self.filter_low.value() * 1000, self.filter_high.value() * 1000)
+        band, settings = self._read_analysis_fields()
         try:
             validate_display_band(band)
             settings.validate()

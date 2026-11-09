@@ -47,6 +47,7 @@ def workspace_stylesheet():
         QLabel {{ color: {c['text']}; background: transparent; }}
         QLabel#title {{ font-size: 19px; font-weight: 700; }}
         QLabel#section {{ font-size: 14px; font-weight: 600; }}
+        QLabel#fileName {{ font-size: 16px; font-weight: 600; }}
         QLabel#secondary {{ color: {c['muted']}; font-size: 12px; }}
         QLabel#badge {{ color: {c['primary']}; background: {c['hover']}; padding: 5px 10px; border-radius: 4px; font-size: 12px; }}
         QLabel#pending {{ color: {c['warning']}; font-size: 12px; }}
@@ -60,10 +61,11 @@ def workspace_stylesheet():
         QPushButton#primary {{ background: {c['primary']}; color: white; border-color: {c['primary']}; }}
         QPushButton#primary:hover {{ background: #17348F; }}
         QPushButton#primary:focus {{ border-color: #93C5FD; }}
-        QPushButton:disabled, QPushButton#primary:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {{
+        QPushButton:disabled, QPushButton#primary:disabled,
+        QLineEdit:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {{
             background: {c['disabled']}; color: {c['muted']}; border-color: {c['border']};
         }}
-        QDoubleSpinBox {{ padding-right: 28px; }}
+        QDoubleSpinBox {{ padding-right: 7px; }}
         QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
             subcontrol-origin: border; width: 22px; background: {c['background']};
             border: none; border-left: 1px solid {c['border']};

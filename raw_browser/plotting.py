@@ -101,8 +101,6 @@ def draw_spectrum(figure: Figure, result: Spectrum, band: tuple[float, float], *
     ax.xaxis.set_major_locator(_TimeLocator(duration))
     set_time_format(ax, duration, minutes=minutes)
     ax.set_ylabel("频率 (kHz)")
-    mode = (f"带通 {result.settings.low_hz / 1000:g}–{result.settings.high_hz / 1000:g} kHz"
-            if result.settings.filter_enabled else "未滤波")
     ax.grid(alpha=0.16)
     if compact:
         # The desktop header already identifies the file and processing mode.
@@ -130,6 +128,8 @@ def draw_spectrum(figure: Figure, result: Spectrum, band: tuple[float, float], *
         figure._spectrum_resize_id = figure.canvas.mpl_connect("resize_event", fit_canvas)
     else:
         # Exported images are standalone, so retain their identifying title.
+        mode = (f"带通 {result.settings.low_hz / 1000:g}–{result.settings.high_hz / 1000:g} kHz"
+                if result.settings.filter_enabled else "未滤波")
         ax.set_title(f"{result.path.name}\n{mode} · 功率谱密度", fontsize=11, parse_math=False)
         figure.colorbar(image, ax=ax, label="功率/频率(dB/Hz)", pad=0.02)
         figure.subplots_adjust(left=0.075, right=0.96, bottom=0.12, top=0.88)

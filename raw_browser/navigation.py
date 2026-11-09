@@ -60,16 +60,15 @@ class SpectrumNavigation:
 
     def _set_view(self, xlim, ylim, *, record=True):
         if self.axes is None:
-            return False
+            return
         previous = (tuple(self.axes.get_xlim()), tuple(self.axes.get_ylim()))
         if previous == (tuple(xlim), tuple(ylim)):
-            return False
+            return
         self.axes.set_xlim(xlim)
         self.axes.set_ylim(ylim)
         if record:
             self.toolbar.push_current()
         self.canvas.draw_idle()
-        return True
 
     def zoom(self, factor, anchor=None, *, time_axis=True, frequency_axis=True):
         if self.axes is None or not math.isfinite(factor) or factor <= 0:
@@ -138,7 +137,7 @@ class SpectrumNavigation:
         else:
             self._drag = (event.x, event.y, tuple(self.axes.get_xlim()),
                           tuple(self.axes.get_ylim()), self.axes.bbox.width,
-                          self.axes.bbox.height, event.button)
+                          self.axes.bbox.height)
             self.canvas.set_cursor(Cursors.MOVE)
 
     def _selection_box(self, event):
@@ -179,7 +178,7 @@ class SpectrumNavigation:
             return
         if self._drag is None or self.axes is None or event.x is None or event.y is None:
             return
-        x, y, xlim, ylim, width, height, _ = self._drag
+        x, y, xlim, ylim, width, height = self._drag
         if width <= 0 or height <= 0:
             return
         dx = (event.x - x) / width * (xlim[1] - xlim[0])
@@ -200,7 +199,7 @@ class SpectrumNavigation:
     def _on_release(self, event):
         if self._selection is not None and event.button == MouseButton.LEFT:
             self._finish_selection(event)
-        elif self._drag is not None and event.button == self._drag[-1]:
+        elif self._drag is not None and event.button == MouseButton.MIDDLE:
             self._finish_drag()
 
     def _on_leave(self, _event):

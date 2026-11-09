@@ -14,13 +14,15 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtTest import QTest
+from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QComboBox, QDoubleSpinBox, QLineEdit, QPushButton
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from raw_browser.core import BLOCK_BYTES, BLOCK_DTYPE, BLOCK_SAMPLES, HEADER_BYTES, SAMPLE_RATE, read_raw
+from raw_browser.core import (
+    BATCH_SIZE, BLOCK_BYTES, BLOCK_DTYPE, BLOCK_SAMPLES, HEADER_BYTES, SAMPLE_RATE, read_raw,
+)
 from raw_browser.plotting import clear_spectrum, draw_spectrum, save_unique_png
 from raw_browser.ui import MainWindow
 
@@ -110,6 +112,11 @@ class WorkspaceTest(unittest.TestCase):
     def test_layout_focus_and_keyboard(self):
         self.load_fixture()
         w = self.window
+        search_box = w.settings_search.parentWidget()
+
+        def position(control):
+            return control.mapTo(w.centralWidget(), control.rect().topLeft())
+
         for width, height in ((1440, 900), (1240, 830), (1060, 620)):
             w.resize(width, height)
             self.settle()
@@ -121,7 +128,7 @@ class WorkspaceTest(unittest.TestCase):
             for control in controls:
                 if control.isVisible():
                     rect = control.rect()
-                    top_left = control.mapTo(w.centralWidget(), rect.topLeft())
+                    top_left = position(control)
                     bottom_right = control.mapTo(w.centralWidget(), rect.bottomRight())
                     self.assertTrue(w.centralWidget().rect().contains(top_left), control.accessibleName())
                     self.assertTrue(w.centralWidget().rect().contains(bottom_right), control.accessibleName())
@@ -132,24 +139,125 @@ class WorkspaceTest(unittest.TestCase):
                 self.assertGreaterEqual(bounds.y0, 0)
                 self.assertLessEqual(bounds.x1, w.figure.bbox.width)
                 self.assertLessEqual(bounds.y1, w.figure.bbox.height)
+            self.assertTrue(search_box.isAncestorOf(w.file_search_edit))
+            self.assertEqual(search_box.objectName(), "panel")
+            self.assertEqual(position(w.settings_panel).y(), position(search_box).y())
+            self.assertLess(position(w.settings_panel).x() + w.settings_panel.width(), position(search_box).x())
+            self.assertLess(position(w.filter_high).x(), position(w.apply_button).x())
+            self.assertLess(position(w.apply_button).x(), position(w.file_search_edit).x())
+            self.assertEqual(position(w.apply_button).y(), position(w.file_search_edit).y())
+            self.assertLess(position(w.save_batch_button).x(), position(w.previous_button).x())
+
+        w.settings_button.click()
+        self.settle()
+        self.assertFalse(w.settings_panel.isVisible())
+        self.assertFalse(search_box.isVisible())
+        self.assertTrue(w.file_search_edit.isVisible())
+        self.assertLess(position(w.file_search_edit).y(), position(w.canvas).y())
+        w.settings_button.click()
+        self.settle()
         before = w.canvas.height()
         w.focus_button.click()
         self.settle()
         self.assertGreater(w.canvas.height(), before)
         self.assertFalse(w.source_panel.isVisible())
         self.assertFalse(w.settings_panel.isVisible())
+        self.assertTrue(w.file_search_edit.isVisible())
+        self.assertTrue(w.file_search_button.isVisible())
+        w.file_search_edit.setText("02")
+        w.file_search_button.click()
+        self.assertEqual(w.index, 1)
         QTest.keyClick(w.focus_button, Qt.Key.Key_Escape)
         self.settle()
         self.assertTrue(w.source_panel.isVisible())
         self.assertTrue(w.settings_panel.isVisible())
+        self.assertTrue(search_box.isVisible())
+        self.assertTrue(search_box.isAncestorOf(w.file_search_edit))
+        self.assertEqual(w.file_search_edit.text(), "02")
         w.display_low.setFocus()
         self.settle()
-        QTest.keyClick(w.display_low, Qt.Key.Key_Right)
-        self.assertEqual(w.index, 0)
+        QTest.keyClick(w.display_low, Qt.Key.Key_Left)
+        self.assertEqual(w.index, 1)
         w.canvas.setFocus()
         self.settle()
+        QTest.keyClick(w.canvas, Qt.Key.Key_Left)
+        self.assertEqual(w.index, 0)
+
+    def test_file_search_jumps_to_first_match_across_batches(self):
+        for number in range(BATCH_SIZE + 1):
+            make_raw(self.directory / f"a_{number}.raw", blocks=1)
+        nested = self.directory / "b_子目录"
+        nested.mkdir()
+        first = nested / "REC_2_水声.RAW"
+        second = nested / "rec_10_水声.raw"
+        for path in (first, second):
+            make_raw(path, blocks=1)
+
+        w = self.window
+        completed = QSignalSpy(w.worker.ready)
+        w.load_source(self.directory)
+        generation = w.generation
+        w.file_search_edit.setText("  c_  ")
+        w.file_search_edit.setFocus()
+        w.file_search_edit.setCursorPosition(2)
+        QTest.keyClick(w.file_search_edit, Qt.Key.Key_Right)
+        self.assertEqual(w.file_search_edit.cursorPosition(), 3)
+        self.assertEqual(w.index, 0)
+        QTest.keyClick(w.file_search_edit, Qt.Key.Key_Return)
+        self.assertEqual(w.files[w.index], first)
+        self.assertEqual(w.position_label.text(), f"{BATCH_SIZE + 2} / {BATCH_SIZE + 3}")
+        self.assertGreater(w.generation, generation)
+        self.assertIs(self.app.focusWidget(), w.canvas)
+        self.wait_for(lambda: w.index in w.cache)
+        self.assertTrue(w.axes.images)
+        jobs = (completed.at(i) for i in range(completed.count()))
+        first_completed = next(index for job_generation, index, _ in jobs
+                               if job_generation == w.generation)
+        self.assertEqual(first_completed, w.index)
+
         QTest.keyClick(w.canvas, Qt.Key.Key_Right)
-        self.assertEqual(w.index, 1)
+        self.assertEqual(w.files[w.index], second)
+        w.file_search_edit.setText("水声.raW")
+        w.file_search_button.click()
+        self.assertEqual(w.files[w.index], first)
+        w.file_search_edit.setText(nested.name)
+        w.file_search_button.click()
+        self.assertTrue(w.file_search_feedback.isVisible())
+        self.assertEqual(w.files[w.index], first)
+
+    def test_file_search_keeps_view_and_resets_on_load(self):
+        w = self.window
+        self.assertFalse(w.file_search_edit.isEnabled())
+        self.assertFalse(w.file_search_button.isEnabled())
+        self.load_fixture()
+        w.zoom_in_button.click()
+        axes = w.axes
+        limits = axes.get_xlim(), axes.get_ylim()
+
+        w.file_search_edit.setText(w.files[0].name)
+        w.file_search_button.click()
+        self.assertIs(w.axes, axes)
+        w.file_search_edit.setText("不存在的文件")
+        w.file_search_button.click()
+        self.assertTrue(w.file_search_feedback.isVisible())
+        self.assertIs(self.app.focusWidget(), w.file_search_edit)
+        w.file_search_edit.setText("   ")
+        QTest.keyClick(w.file_search_edit, Qt.Key.Key_Return)
+        self.assertFalse(w.file_search_feedback.isVisible())
+        self.assertIs(w.axes, axes)
+        self.assertEqual((w.axes.get_xlim(), w.axes.get_ylim()), limits)
+        self.assertEqual(w.index, 0)
+
+        w.file_search_edit.setText("不存在的文件")
+        w.file_search_button.click()
+        w.rescan()
+        self.assertEqual(w.file_search_edit.text(), "")
+        self.assertFalse(w.file_search_feedback.isVisible())
+        empty = self.directory / "空目录"
+        empty.mkdir()
+        w.load_source(empty)
+        self.assertFalse(w.file_search_edit.isEnabled())
+        self.assertFalse(w.file_search_button.isEnabled())
 
     def test_settings_zoom_and_export(self):
         self.load_fixture()
