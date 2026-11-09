@@ -15,7 +15,8 @@ from scipy import fft, signal
 SAMPLE_RATE = 96_000
 HEADER_BYTES = 32
 BLOCK_SAMPLES = 8192
-BLOCK_BYTES = HEADER_BYTES + BLOCK_SAMPLES * 4
+SAMPLE_DTYPE = np.dtype("<u4")
+BLOCK_BYTES = HEADER_BYTES + BLOCK_SAMPLES * SAMPLE_DTYPE.itemsize
 WINDOW_SIZE = 1024
 HOP = 512
 NYQUIST = SAMPLE_RATE / 2
@@ -25,7 +26,10 @@ FFT_WORKERS = max(1, min(4, (os.cpu_count() or 2) - 2))
 EPS = np.finfo(np.float64).eps
 VOLTS_PER_COUNT = (4.098 * 2) / (2 ** 24)
 PSD_FLOOR_DB = float(10 * np.log10(EPS))
-BLOCK_DTYPE = np.dtype([("header", "V32"), ("samples", "<u4", (BLOCK_SAMPLES,))])
+BLOCK_DTYPE = np.dtype([
+    ("header", f"V{HEADER_BYTES}"),
+    ("samples", SAMPLE_DTYPE, (BLOCK_SAMPLES,)),
+])
 
 
 class ProcessingCancelled(Exception):
@@ -137,15 +141,22 @@ def scan_raw_files(directory: Path, recursive: bool = False) -> list[Path]:
     return sorted(files, key=natural_key)
 
 
+def _decode_sample_words(words: np.ndarray) -> np.ndarray:
+    # Shift away the high byte, then arithmetic-shift the signed word.
+    # This avoids large boolean-indexed floating-point temporaries.
+    signed = np.left_shift(words, 8).view(np.int32)
+    return np.right_shift(signed, 8, out=signed)
+
+
 def read_raw(path: Path, cancel: threading.Event | None = None) -> np.ndarray:
     path = Path(path)
     before = path.stat()
     if before.st_size == 0:
         raise RawFormatError("RAW文件为空。")
     blocks, remainder = divmod(before.st_size, BLOCK_BYTES)
-    if remainder:
-        raise RawFormatError(f"文件存在不完整数据块：每块应为{BLOCK_BYTES}字节，尾部多出{remainder}字节。")
-    output = np.empty(blocks * BLOCK_SAMPLES, dtype=np.float64)
+    full_samples = blocks * BLOCK_SAMPLES
+    tail_samples = max(0, remainder - HEADER_BYTES) // SAMPLE_DTYPE.itemsize
+    output = np.empty(full_samples + tail_samples, dtype=np.float64)
     with path.open("rb") as stream:
         for first in range(0, blocks, 64):
             check_cancel(cancel)
@@ -154,11 +165,14 @@ def read_raw(path: Path, cancel: threading.Event | None = None) -> np.ndarray:
             if len(raw) != count * BLOCK_BYTES:
                 raise RawFormatError("文件在读取期间被截断，请停止采集后重新扫描。")
             words = np.frombuffer(raw, dtype=BLOCK_DTYPE)["samples"]
-            # Shift away the high byte, then arithmetic-shift the signed word.
-            # This avoids large boolean-indexed floating-point temporaries.
-            signed = np.left_shift(words, 8).view(np.int32)
-            np.right_shift(signed, 8, out=signed)
-            output[first * BLOCK_SAMPLES:(first + count) * BLOCK_SAMPLES] = signed.ravel()
+            output[first * BLOCK_SAMPLES:(first + count) * BLOCK_SAMPLES] = _decode_sample_words(words).ravel()
+        if tail_samples:
+            check_cancel(cancel)
+            raw = stream.read(remainder)
+            if len(raw) != remainder:
+                raise RawFormatError("文件在读取期间被截断，请停止采集后重新扫描。")
+            words = np.frombuffer(raw, dtype=SAMPLE_DTYPE, count=tail_samples, offset=HEADER_BYTES)
+            output[full_samples:] = _decode_sample_words(words)
     after = path.stat()
     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
         raise RawFormatError("文件在读取期间发生变化，请停止采集后重新扫描。")

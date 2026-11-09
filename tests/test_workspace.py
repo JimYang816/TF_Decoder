@@ -20,7 +20,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from raw_browser.core import BLOCK_DTYPE, BLOCK_SAMPLES, SAMPLE_RATE
+from raw_browser.core import BLOCK_BYTES, BLOCK_DTYPE, BLOCK_SAMPLES, HEADER_BYTES, SAMPLE_RATE, read_raw
 from raw_browser.plotting import clear_spectrum, draw_spectrum, save_unique_png
 from raw_browser.ui import MainWindow
 
@@ -89,6 +89,23 @@ class WorkspaceTest(unittest.TestCase):
         make_raw(self.directory / "声学采集_02.raw")
         self.window.load_source(self.directory)
         self.wait_for(lambda: len(self.window.cache) == 2)
+
+    def test_partial_final_raw_block_is_plotted(self):
+        path = self.directory / "短尾块.raw"
+        make_raw(path, blocks=2)
+        tail_samples = 632
+        expected = read_raw(path)[:BLOCK_SAMPLES + tail_samples]
+        with path.open("r+b") as stream:
+            # Keep three bytes of the next sample to exercise unaligned EOF.
+            stream.truncate(BLOCK_BYTES + HEADER_BYTES + tail_samples * 4 + 3)
+
+        np.testing.assert_array_equal(read_raw(path), expected)
+        w = self.window
+        w.load_source(path)
+        self.wait_for(lambda: w.cache or w.errors)
+        self.assertFalse(w.errors)
+        self.assertEqual(w.cache[0].sample_count, expected.size)
+        self.assertTrue(w.axes.images)
 
     def test_layout_focus_and_keyboard(self):
         self.load_fixture()
